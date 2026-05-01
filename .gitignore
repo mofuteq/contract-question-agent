@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# CUAD payloads are large and license-restricted; keep directory shape only.
+data/cuad/raw/*
+!data/cuad/raw/.gitkeep
+data/cuad/processed/*
+!data/cuad/processed/.gitkeep
