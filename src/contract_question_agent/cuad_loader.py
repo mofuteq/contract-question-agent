@@ -21,7 +21,6 @@ import argparse
 import json
 import logging
 import re
-import urllib.request
 import zipfile
 from pathlib import Path
 from typing import IO, Any, Iterable
@@ -367,21 +366,6 @@ def write_jsonl(path: Path, records: Iterable[Any]) -> int:
             fp.write("\n")
             count += 1
     return count
-
-
-def download_cuad(url: str, dest: Path) -> Path:
-    """Download CUAD from ``url`` to ``dest``. Caller chooses where it lives.
-
-    Intentionally minimal: no retries, no progress bar, no auth. Tests do not
-    exercise this path.
-    """
-    dest = Path(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("Downloading CUAD from %s -> %s", url, dest)
-    with urllib.request.urlopen(url) as resp, dest.open("wb") as out:  # noqa: S310
-        while chunk := resp.read(1 << 16):
-            out.write(chunk)
-    return dest
 
 
 # --------------------------------------------------------------------------- #
