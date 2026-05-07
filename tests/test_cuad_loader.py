@@ -298,6 +298,38 @@ class TestParseCuad:
         # Still one contract per entry.
         assert len(out.contracts) == 2
 
+    def test_offset_mismatch_warns_but_does_not_fail(self, caplog):
+        # answer_start points at a position whose substring does NOT match.
+        doc = {
+            "data": [
+                {
+                    "title": "BAD_OFFSETS",
+                    "paragraphs": [
+                        {
+                            "context": "The agreement is governed by Delaware law.",
+                            "qas": [
+                                {
+                                    "id": "BAD_OFFSETS__Governing Law",
+                                    "question": 'related to "Governing Law"',
+                                    "answers": [
+                                        {"text": "governed by Delaware law", "answer_start": 0}
+                                    ],
+                                    "is_impossible": False,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        with caplog.at_level("WARNING", logger="contract_question_agent.cuad_loader"):
+            out = parse_cuad(doc)
+        assert any("Span offset mismatch" in rec.message for rec in caplog.records)
+        # Loader still emits the span; validation is advisory only.
+        spans = [s for s in out.spans if s.contract_id == "BAD_OFFSETS"]
+        assert len(spans) == 1
+        assert spans[0].evidence_text == "governed by Delaware law"
+
 
 # --------------------------------------------------------------------------- #
 # I/O
@@ -305,10 +337,10 @@ class TestParseCuad:
 
 
 class TestWriteJsonl:
-    def test_writes_dataclass_records(self, tmp_path):
+    def test_writes_pydantic_records(self, tmp_path):
         records = [
-            ContractRecord("c1", "f1", "text-1"),
-            ContractRecord("c2", "f2", "text-2"),
+            ContractRecord(contract_id="c1", source_file="f1", contract_text="text-1"),
+            ContractRecord(contract_id="c2", source_file="f2", contract_text="text-2"),
         ]
         path = tmp_path / "contracts.jsonl"
         n = write_jsonl(path, records)

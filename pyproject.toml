@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "contract-question-agent"
 version = "0.1.0"
-description = "Contract question answering agent built on the CUAD dataset (data layer only in v0.1)."
+description = "Data layer for a contract verification-question generator using the CUAD dataset."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "contract-question-agent contributors" }]
-dependencies = []
+dependencies = ["pydantic>=2"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

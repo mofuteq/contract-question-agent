@@ -1,10 +1,27 @@
 # contract-question-agent
 
-A small open-source project that will (eventually) answer questions about
-commercial contracts. **v0.1 ships the data preparation layer only** — no
-agent, no LLM prompts, no legal advice.
+A small open-source project that frames **contract review as an information
+asymmetry problem** and (eventually) generates **verification questions**
+that a human reviewer can raise about a commercial contract.
 
-This repository currently contains a loader for the
+The drafter of a contract typically understands its terms, edge cases, and
+business implications far better than the counter-party reviewing it. The
+goal of this project is to help close that gap by surfacing **concrete,
+clause-grounded questions worth asking** — not by issuing verdicts.
+
+This project is therefore explicitly:
+
+- **Not** a contract question-answering bot.
+- **Not** a legal-advice tool.
+- **Not** a system that decides whether a contract is acceptable.
+
+Any verification question that future versions generate is a **prompt for
+further investigation** and **must be discussed with a qualified legal
+professional** before being relied upon.
+
+**v0.1 ships the data preparation layer only** — no agent, no LLM
+prompts, no question generation, no clause interpretation. This repository
+currently contains a loader for the
 [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad)
 that produces JSONL files filtered to eight clause types relevant to the
 project's first evaluation milestone.
@@ -40,5 +57,8 @@ See [docs/data.md](docs/data.md) for licensing and attribution requirements.
 ## Scope and disclaimers
 
 - The processed JSONL is intended for **evaluation and research only**.
-- Nothing in this repository is, or should be relied upon as, legal advice.
+- This project does not provide legal advice and does not decide whether
+  any contract is acceptable.
+- Any future-generated verification questions are conversation starters
+  for review by a qualified legal professional, not conclusions.
 - CUAD is © The Atticus Project, distributed under CC BY 4.0.

@@ -2,16 +2,17 @@
 
 Reads the Contract Understanding Atticus Dataset (CUAD) JSON, filters it to a
 small set of clause types relevant to ``contract-question-agent`` v0.1, and
-emits three JSONL files suitable for downstream evaluation:
+emits three JSONL files for downstream evaluation:
 
 * ``contracts.jsonl``     -- one record per contract.
 * ``labels.jsonl``        -- one record per (contract, clause_type) pair
                              indicating whether the clause is present.
 * ``clause_spans.jsonl``  -- one record per highlighted answer span.
 
-The loader is stdlib-only and does not load any LLM prompts or generate any
-legal advice. CUAD itself is published by The Atticus Project under CC BY 4.0;
-see ``docs/data.md`` for attribution requirements.
+This module is part of the v0.1 **data preparation layer only**. It does not
+load LLM prompts, generate verification questions, interpret clauses, or
+produce legal advice. CUAD is published by The Atticus Project under
+CC BY 4.0; see ``docs/data.md`` for attribution requirements.
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ import logging
 import re
 import urllib.request
 import zipfile
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import IO, Any, Iterable, Iterator
+from typing import IO, Any, Iterable
+
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +52,8 @@ def _normalize_label(label: str) -> str:
     return re.sub(r"[\s_\-/]+", " ", label.strip().lower())
 
 
-# Normalized lookup -> canonical label used in our outputs. We seed it with the
-# target labels themselves and add CUAD's spelling variants (title-cased
-# prepositions, "Ip" instead of "IP", etc.) so the filter is robust.
+# Normalized lookup -> canonical label used in our outputs. Seeded with the
+# target labels themselves and CUAD's known spelling variants.
 CLAUSE_TYPE_LOOKUP: dict[str, str] = {
     _normalize_label(name): name for name in TARGET_CLAUSE_TYPES
 }
@@ -72,27 +73,30 @@ _QUESTION_CATEGORY_RE = re.compile(r'related to\s+"([^"]+)"', re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------- #
-# Record shapes
+# Record shapes (pydantic v2)
 # --------------------------------------------------------------------------- #
 
 
-@dataclass(frozen=True)
-class ContractRecord:
+class _FrozenRecord(BaseModel):
+    """Base for immutable record models."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ContractRecord(_FrozenRecord):
     contract_id: str
     source_file: str
     contract_text: str
 
 
-@dataclass(frozen=True)
-class LabelRecord:
+class LabelRecord(_FrozenRecord):
     contract_id: str
     source_file: str
     clause_type: str
     label_present: bool
 
 
-@dataclass(frozen=True)
-class ClauseSpanRecord:
+class ClauseSpanRecord(_FrozenRecord):
     contract_id: str
     source_file: str
     clause_type: str
@@ -102,11 +106,20 @@ class ClauseSpanRecord:
     label_present: bool
 
 
-@dataclass
-class ProcessedDataset:
-    contracts: list[ContractRecord] = field(default_factory=list)
-    labels: list[LabelRecord] = field(default_factory=list)
-    spans: list[ClauseSpanRecord] = field(default_factory=list)
+class ProcessedDataset(BaseModel):
+    """Mutable container populated incrementally during parsing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contracts: list[ContractRecord] = Field(default_factory=list)
+    labels: list[LabelRecord] = Field(default_factory=list)
+    spans: list[ClauseSpanRecord] = Field(default_factory=list)
+
+
+class ProcessingStats(_FrozenRecord):
+    contracts: int
+    labels: int
+    spans: int
 
 
 # --------------------------------------------------------------------------- #
@@ -151,6 +164,32 @@ def _qa_has_answer(qa: dict[str, Any]) -> bool:
     )
 
 
+def _validate_span_offsets(
+    *,
+    context: str,
+    text: str,
+    start_char: int | None,
+    end_char: int | None,
+    contract_id: str,
+    clause_type: str,
+) -> None:
+    """Warn (do not raise) if reported offsets do not slice to the evidence text."""
+    if start_char is None or end_char is None:
+        return
+    actual = context[start_char:end_char]
+    if actual != text:
+        logger.warning(
+            "Span offset mismatch for contract=%r clause=%r at [%d:%d]: "
+            "context substring %r != evidence %r",
+            contract_id,
+            clause_type,
+            start_char,
+            end_char,
+            actual,
+            text,
+        )
+
+
 def parse_cuad(
     data: dict[str, Any],
     *,
@@ -185,8 +224,8 @@ def parse_cuad(
             logger.warning("Skipping entry without title/paragraphs: %r", entry.get("title"))
             continue
         if len(paragraphs) > 1:
-            # CUAD's convention is exactly one paragraph per contract; warn but
-            # still process the first to avoid silently dropping data.
+            # CUAD's convention is one paragraph per contract; warn but still
+            # process the first to avoid silently dropping data.
             logger.warning(
                 "Contract %r has %d paragraphs; using only the first.",
                 title,
@@ -224,30 +263,40 @@ def parse_cuad(
                 continue
 
             answered = _qa_has_answer(qa)
-            if answered:
-                present_clauses.add(clause_type)
-                for answer in qa.get("answers") or []:
-                    if not isinstance(answer, dict):
-                        continue
-                    text = answer.get("text")
-                    if not isinstance(text, str) or not text.strip():
-                        continue
-                    start = answer.get("answer_start")
-                    start_char = start if isinstance(start, int) and start >= 0 else None
-                    end_char = (
-                        start_char + len(text) if start_char is not None else None
+            if not answered:
+                continue
+
+            present_clauses.add(clause_type)
+            for answer in qa.get("answers") or []:
+                if not isinstance(answer, dict):
+                    continue
+                text = answer.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                start = answer.get("answer_start")
+                start_char = start if isinstance(start, int) and start >= 0 else None
+                end_char = (
+                    start_char + len(text) if start_char is not None else None
+                )
+                _validate_span_offsets(
+                    context=context,
+                    text=text,
+                    start_char=start_char,
+                    end_char=end_char,
+                    contract_id=contract_id,
+                    clause_type=clause_type,
+                )
+                spans_by_clause[clause_type].append(
+                    ClauseSpanRecord(
+                        contract_id=contract_id,
+                        source_file=title,
+                        clause_type=clause_type,
+                        evidence_text=text,
+                        start_char=start_char,
+                        end_char=end_char,
+                        label_present=True,
                     )
-                    spans_by_clause[clause_type].append(
-                        ClauseSpanRecord(
-                            contract_id=contract_id,
-                            source_file=title,
-                            clause_type=clause_type,
-                            evidence_text=text,
-                            start_char=start_char,
-                            end_char=end_char,
-                            label_present=True,
-                        )
-                    )
+                )
 
         for clause_type in targets:
             present = clause_type in present_clauses
@@ -305,13 +354,15 @@ def _read_json(fp: IO[Any]) -> dict[str, Any]:
 
 
 def write_jsonl(path: Path, records: Iterable[Any]) -> int:
-    """Write dataclass instances (or plain dicts) as JSONL. Returns row count."""
+    """Write pydantic models (or plain dicts) as JSONL. Returns row count."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with path.open("w", encoding="utf-8") as fp:
         for record in records:
-            payload = asdict(record) if hasattr(record, "__dataclass_fields__") else record
+            payload = (
+                record.model_dump() if isinstance(record, BaseModel) else record
+            )
             fp.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             fp.write("\n")
             count += 1
@@ -321,8 +372,8 @@ def write_jsonl(path: Path, records: Iterable[Any]) -> int:
 def download_cuad(url: str, dest: Path) -> Path:
     """Download CUAD from ``url`` to ``dest``. Caller chooses where it lives.
 
-    This function is intentionally minimal: no retries, no progress bar, no
-    auth. It exists so callers can script a full pipeline; tests do not use it.
+    Intentionally minimal: no retries, no progress bar, no auth. Tests do not
+    exercise this path.
     """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -336,13 +387,6 @@ def download_cuad(url: str, dest: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # Top-level pipeline
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class ProcessingStats:
-    contracts: int
-    labels: int
-    spans: int
 
 
 def process_cuad(
