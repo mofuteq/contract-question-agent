@@ -53,10 +53,18 @@ python -m contract_question_agent.cuad_downloader \
 
 Flags:
 
-* `--source` (default `huggingface`) — `huggingface` fetches `CUAD_v1.json`
-  directly; `zenodo` fetches the original `.zip` (which you must unzip
-  before running the loader).
-* `--output` (default `data/cuad/raw/CUAD_v1.json`) — destination path.
+* `--source` (default `huggingface`) — `huggingface` fetches
+  `CUAD_v1.json`; `zenodo` fetches the original `.zip` archive. The
+  loader reads `.zip` directly (`load_cuad_json` extracts the first
+  JSON member transparently), so unzipping is **optional**; do it
+  manually if you prefer.
+* `--output` — destination path. The default is **source-specific** so
+  the file extension always matches the payload that was fetched:
+  * `huggingface` → `data/cuad/raw/CUAD_v1.json`
+  * `zenodo` → `data/cuad/raw/CUAD_v1.zip`
+
+  Pass `--output PATH` to override. An explicit path always wins, even
+  if its extension differs from the source's payload format.
 * `--force` — overwrite an existing output file. Without `--force`, an
   existing file is preserved and the network is not contacted.
 * `--verbose` — log the source URL and destination at INFO level.

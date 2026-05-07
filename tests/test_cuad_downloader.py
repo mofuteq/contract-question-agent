@@ -13,10 +13,11 @@ from pathlib import Path
 import pytest
 
 from contract_question_agent.cuad_downloader import (
-    DEFAULT_OUTPUT,
+    DEFAULT_OUTPUTS,
     DEFAULT_SOURCE,
     SOURCE_URLS,
     CuadDownloadError,
+    default_output_for,
     download_cuad,
     main,
     resolve_source_url,
@@ -97,8 +98,23 @@ def test_default_source_is_huggingface():
     assert "huggingface" in SOURCE_URLS
 
 
-def test_default_output_path():
-    assert DEFAULT_OUTPUT == Path("data/cuad/raw/CUAD_v1.json")
+class TestDefaultOutputs:
+    def test_huggingface_default_is_json(self):
+        assert DEFAULT_OUTPUTS["huggingface"] == Path("data/cuad/raw/CUAD_v1.json")
+        assert default_output_for("huggingface") == Path("data/cuad/raw/CUAD_v1.json")
+
+    def test_zenodo_default_is_zip(self):
+        assert DEFAULT_OUTPUTS["zenodo"] == Path("data/cuad/raw/CUAD_v1.zip")
+        assert default_output_for("zenodo") == Path("data/cuad/raw/CUAD_v1.zip")
+
+    def test_default_extension_matches_source_payload(self):
+        # The whole point of per-source defaults: extension must match payload.
+        assert default_output_for("huggingface").suffix == ".json"
+        assert default_output_for("zenodo").suffix == ".zip"
+
+    def test_unknown_source_raises(self):
+        with pytest.raises(ValueError, match="Unknown CUAD source"):
+            default_output_for("dropbox")
 
 
 # --------------------------------------------------------------------------- #
@@ -176,6 +192,29 @@ class TestDownloadCuad:
                 source="ftp", output=tmp_path / "x.json",
                 url_opener=_make_opener(b""),
             )
+
+    def test_no_output_uses_per_source_default(self, tmp_path, monkeypatch):
+        # download_cuad(output=None) should resolve to default_output_for(source).
+        monkeypatch.chdir(tmp_path)
+
+        hf_path = download_cuad(url_opener=_make_opener(b"{}"))
+        assert hf_path == Path("data/cuad/raw/CUAD_v1.json")
+        assert (tmp_path / hf_path).read_bytes() == b"{}"
+
+        zen_path = download_cuad(
+            source="zenodo", url_opener=_make_opener(b"PK\x03\x04")
+        )
+        assert zen_path == Path("data/cuad/raw/CUAD_v1.zip")
+        assert (tmp_path / zen_path).read_bytes() == b"PK\x03\x04"
+
+    def test_explicit_output_overrides_per_source_default(self, tmp_path):
+        # Explicit output must win even if it has a "wrong" extension for source.
+        out = tmp_path / "custom-name.bin"
+        result = download_cuad(
+            source="zenodo", output=out, url_opener=_make_opener(b"PK")
+        )
+        assert result == out
+        assert out.read_bytes() == b"PK"
 
     def test_logs_source_and_destination(self, tmp_path, caplog):
         out = tmp_path / "CUAD_v1.json"
@@ -306,6 +345,43 @@ class TestCli:
     def test_cli_rejects_unknown_source(self, tmp_path):
         with pytest.raises(SystemExit):
             main(["--source", "dropbox", "--output", str(tmp_path / "x.json")])
+
+    def test_cli_default_output_huggingface(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "urllib.request.urlopen", lambda url: _FakeResponse(b'{"data": []}')
+        )
+
+        rc = main([])  # no --output, no --source
+
+        assert rc == 0
+        assert (tmp_path / "data/cuad/raw/CUAD_v1.json").exists()
+        assert not (tmp_path / "data/cuad/raw/CUAD_v1.zip").exists()
+
+    def test_cli_default_output_zenodo(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "urllib.request.urlopen", lambda url: _FakeResponse(b"PK\x03\x04")
+        )
+
+        rc = main(["--source", "zenodo"])  # no --output
+
+        assert rc == 0
+        assert (tmp_path / "data/cuad/raw/CUAD_v1.zip").exists()
+        assert not (tmp_path / "data/cuad/raw/CUAD_v1.json").exists()
+
+    def test_cli_explicit_output_overrides_default(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "urllib.request.urlopen", lambda url: _FakeResponse(b"PK")
+        )
+        explicit = tmp_path / "elsewhere" / "custom.bin"
+
+        rc = main(["--source", "zenodo", "--output", str(explicit)])
+
+        assert rc == 0
+        assert explicit.read_bytes() == b"PK"
+        assert not (tmp_path / "data/cuad/raw/CUAD_v1.zip").exists()
 
     def test_cli_zenodo_source(self, tmp_path, monkeypatch):
         captured: list[str] = []

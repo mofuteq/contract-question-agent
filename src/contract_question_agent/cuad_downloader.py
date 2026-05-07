@@ -36,13 +36,19 @@ SOURCE_URLS: Final[dict[str, str]] = {
         "https://huggingface.co/datasets/theatticusproject/cuad/"
         "resolve/main/CUAD_v1/CUAD_v1.json"
     ),
-    # Optional: Zenodo hosts the original zipped release. Useful as a fallback;
-    # callers must unzip it themselves before passing to the loader.
+    # Optional: Zenodo hosts the original zipped release. The loader reads
+    # ``.zip`` directly, so unzipping is optional for callers.
     "zenodo": "https://zenodo.org/record/4595826/files/CUAD_v1.zip",
 }
 
+# Per-source default output paths. Picked so the file extension always matches
+# the payload format actually being fetched.
+DEFAULT_OUTPUTS: Final[dict[str, Path]] = {
+    "huggingface": Path("data/cuad/raw/CUAD_v1.json"),
+    "zenodo": Path("data/cuad/raw/CUAD_v1.zip"),
+}
+
 DEFAULT_SOURCE: Final[str] = "huggingface"
-DEFAULT_OUTPUT: Final[Path] = Path("data/cuad/raw/CUAD_v1.json")
 DEFAULT_CHUNK_SIZE: Final[int] = 1 << 16  # 64 KiB
 
 
@@ -73,10 +79,26 @@ def resolve_source_url(source: str) -> str:
         ) from exc
 
 
+def default_output_for(source: str) -> Path:
+    """Return the per-source default output path or raise ``ValueError``.
+
+    The default is chosen so the extension matches the payload (``.json`` for
+    HuggingFace, ``.zip`` for Zenodo) instead of always producing
+    ``CUAD_v1.json`` regardless of source.
+    """
+    try:
+        return DEFAULT_OUTPUTS[source]
+    except KeyError as exc:
+        choices = ", ".join(sorted(DEFAULT_OUTPUTS))
+        raise ValueError(
+            f"Unknown CUAD source {source!r}; available: {choices}"
+        ) from exc
+
+
 def download_cuad(
     *,
     source: str = DEFAULT_SOURCE,
-    output: Path | str = DEFAULT_OUTPUT,
+    output: Path | str | None = None,
     force: bool = False,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     url_opener: UrlOpener | None = None,
@@ -90,7 +112,9 @@ def download_cuad(
 
     Args:
         source: Key into :data:`SOURCE_URLS` (``"huggingface"`` or ``"zenodo"``).
-        output: Destination path.
+        output: Destination path. When ``None`` (the default), the per-source
+            default from :func:`default_output_for` is used so the file
+            extension matches the payload.
         force: When True, overwrite an existing ``output``.
         chunk_size: Bytes per ``read`` call while streaming.
         url_opener: Override for ``urllib.request.urlopen`` (used by tests).
@@ -103,7 +127,7 @@ def download_cuad(
         CuadDownloadError: Network or filesystem failure.
     """
     url = resolve_source_url(source)
-    output_path = Path(output)
+    output_path = Path(output) if output is not None else default_output_for(source)
 
     if output_path.exists() and not force:
         logger.info(
@@ -176,8 +200,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"Destination path (default: {DEFAULT_OUTPUT}).",
+        default=None,
+        help=(
+            "Destination path. Default depends on --source: "
+            f"{DEFAULT_OUTPUTS['huggingface']} for huggingface, "
+            f"{DEFAULT_OUTPUTS['zenodo']} for zenodo."
+        ),
     )
     parser.add_argument(
         "--force",
