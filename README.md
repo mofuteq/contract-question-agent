@@ -44,16 +44,25 @@ tests/
 
 ## Quick start
 
+This project uses [uv](https://docs.astral.sh/uv/) and a pinned
+`.python-version` to make local development reproducible with
+**Python 3.13.13**. `uv sync` installs the matching interpreter (no
+prior install needed), creates `.venv/`, and resolves all dependencies
+from the committed `uv.lock`.
+
 ```bash
-pip install -e ".[dev]"
-pytest
+# Set up the environment (Python 3.13.13 + locked dependencies).
+uv sync
+
+# Run the test suite.
+uv run pytest
 
 # 1. Download CUAD_v1.json (Hugging Face is the default source).
-python -m contract_question_agent.cuad_downloader --source huggingface
+uv run cuad-downloader --source huggingface
 # Writes data/cuad/raw/CUAD_v1.json by default.
 
 # 2. Process it into JSONL filtered to the v0.1 clause types.
-python -m contract_question_agent.cuad_loader \
+uv run cuad-loader \
   --input data/cuad/raw/CUAD_v1.json \
   --output-dir data/cuad/processed
 ```
@@ -61,7 +70,7 @@ python -m contract_question_agent.cuad_loader \
 Zenodo is also supported as an alternative source:
 
 ```bash
-python -m contract_question_agent.cuad_downloader --source zenodo
+uv run cuad-downloader --source zenodo
 # Writes data/cuad/raw/CUAD_v1.zip by default. The loader reads .zip
 # directly, so you can pass it straight to --input without unzipping.
 ```

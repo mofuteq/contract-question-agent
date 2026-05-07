@@ -7,17 +7,17 @@ name = "contract-question-agent"
 version = "0.1.0"
 description = "Data layer for a contract verification-question generator using the CUAD dataset."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [{ name = "contract-question-agent contributors" }]
 dependencies = ["pydantic>=2"]
 
-[project.optional-dependencies]
-dev = ["pytest>=7"]
-
 [project.scripts]
 cuad-loader = "contract_question_agent.cuad_loader:main"
 cuad-downloader = "contract_question_agent.cuad_downloader:main"
+
+[dependency-groups]
+dev = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
