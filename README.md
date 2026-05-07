@@ -35,8 +35,10 @@ data/cuad/
 docs/
   data.md         # data provenance, license, limitations
 src/contract_question_agent/
-  cuad_loader.py  # parser + JSONL writer
+  cuad_downloader.py  # optional downloader
+  cuad_loader.py      # parser + JSONL writer
 tests/
+  test_cuad_downloader.py
   test_cuad_loader.py
 ```
 
@@ -46,11 +48,26 @@ tests/
 pip install -e ".[dev]"
 pytest
 
-# After obtaining CUAD_v1.json (see docs/data.md):
+# 1. Download CUAD_v1.json (Hugging Face is the default source).
+python -m contract_question_agent.cuad_downloader --source huggingface
+# Writes data/cuad/raw/CUAD_v1.json by default.
+
+# 2. Process it into JSONL filtered to the v0.1 clause types.
 python -m contract_question_agent.cuad_loader \
   --input data/cuad/raw/CUAD_v1.json \
   --output-dir data/cuad/processed
 ```
+
+Zenodo is also supported as an alternative source:
+
+```bash
+python -m contract_question_agent.cuad_downloader --source zenodo
+# Writes data/cuad/raw/CUAD_v1.zip by default. The loader reads .zip
+# directly, so you can pass it straight to --input without unzipping.
+```
+
+The downloader is optional — if you already have `CUAD_v1.json` (or the
+zip archive) on disk, place it under `data/cuad/raw/` and skip step 1.
 
 See [docs/data.md](docs/data.md) for licensing and attribution requirements.
 
