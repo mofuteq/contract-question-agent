@@ -40,14 +40,42 @@ the thing that is licensed) is the expert annotation.
 
 ## Obtaining the raw data
 
-This repository **does not vendor CUAD**. Download it yourself:
+This repository **does not vendor CUAD**. Download it yourself, either with
+the bundled downloader script or by hand:
 
-* From the official GitHub release:
+### Option 1: bundled downloader (recommended)
+
+```bash
+python -m contract_question_agent.cuad_downloader \
+  --source huggingface \
+  --output data/cuad/raw/CUAD_v1.json
+```
+
+Flags:
+
+* `--source` (default `huggingface`) — `huggingface` fetches `CUAD_v1.json`
+  directly; `zenodo` fetches the original `.zip` (which you must unzip
+  before running the loader).
+* `--output` (default `data/cuad/raw/CUAD_v1.json`) — destination path.
+* `--force` — overwrite an existing output file. Without `--force`, an
+  existing file is preserved and the network is not contacted.
+* `--verbose` — log the source URL and destination at INFO level.
+
+The script streams the payload in 64 KiB chunks and writes through a
+`*.part` file so a partial download is never confused with a complete
+one.
+
+### Option 2: download manually
+
+* Hugging Face dataset:
+  https://huggingface.co/datasets/theatticusproject/cuad
+* Official GitHub release:
   https://github.com/TheAtticusProject/cuad/releases
-* Or from the HuggingFace mirror linked above.
+* Zenodo archive:
+  https://zenodo.org/record/4595826
 
-Place the downloaded payload (either the `.json` file or the `.zip`
-archive that contains it) under `data/cuad/raw/`, e.g.:
+Place the resulting `.json` (or unzipped contents of the archive) under
+`data/cuad/raw/`, e.g.:
 
 ```
 data/cuad/raw/CUAD_v1.json

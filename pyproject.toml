@@ -17,6 +17,7 @@ dev = ["pytest>=7"]
 
 [project.scripts]
 cuad-loader = "contract_question_agent.cuad_loader:main"
+cuad-downloader = "contract_question_agent.cuad_downloader:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
