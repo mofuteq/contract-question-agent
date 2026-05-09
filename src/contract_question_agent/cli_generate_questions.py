@@ -1,4 +1,4 @@
-"""CLI for v0.2 poor E2E verification-question generation."""
+"""CLI for v0.2 minimal E2E verification-question generation."""
 
 from __future__ import annotations
 

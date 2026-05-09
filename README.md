@@ -26,7 +26,7 @@ contains a loader for the
 that produces JSONL files filtered to eight clause types relevant to the
 project's first evaluation milestone.
 
-**v0.2 adds a deliberately poor end-to-end path** from CUAD
+**v0.2 adds a deliberately minimal end-to-end path** from CUAD
 `clause_spans.jsonl` to structured `verification_questions.jsonl`. The v0.2
 workflow is currently implemented with Microsoft Agent Framework, while
 business logic is kept in framework-independent nodes. It uses an
@@ -85,7 +85,7 @@ uv run cuad-loader \
   --input data/cuad/raw/CUAD_v1.json \
   --output-dir data/cuad/processed
 
-# 3. Run the v0.2 poor E2E generator without network access.
+# 3. Run the v0.2 minimal E2E generator without network access.
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
   --clause-type "Non-Compete" \
@@ -106,7 +106,7 @@ zip archive) on disk, place it under `data/cuad/raw/` and skip step 1.
 
 See [docs/data.md](docs/data.md) for licensing and attribution requirements.
 
-## v0.2 poor E2E generation
+## v0.2 minimal E2E generation
 
 The generator is intentionally a linear workflow:
 

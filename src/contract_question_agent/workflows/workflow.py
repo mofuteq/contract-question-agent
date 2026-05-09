@@ -91,7 +91,7 @@ def build_workflow(*, model_client: QuestionModelClient):
     return (
         WorkflowBuilder(
             start_executor=load,
-            name="contract-question-agent-v0.2-poor-e2e",
+            name="contract-question-agent-v0.2-minimal-e2e",
             description="Linear CUAD clause span to verification question JSONL workflow.",
             output_executors=[done],
         )
