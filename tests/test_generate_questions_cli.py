@@ -124,6 +124,8 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
     assert "rows_written=1" in log_text
     assert "OPENROUTER_API_KEY" not in log_text
     assert "Employee will not compete" not in log_text
+    assert "What should be reviewed about this Non-Compete clause?" not in log_text
+    assert "Grounding review in facts" not in log_text
 
 
 def test_cli_fails_when_run_directory_exists(tmp_path):

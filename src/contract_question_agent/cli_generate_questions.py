@@ -146,6 +146,10 @@ def main(argv: list[str] | None = None) -> None:
         dry_run=args.dry_run,
     )
     result = run_workflow(request, model_client=model_client)
+    logger.info("rows_read=%s", result.rows_read)
+    logger.info("rows_filtered=%s", result.rows_filtered)
+    logger.info("rows_generated=%s", result.rows_generated)
+    logger.info("safety_failed_count=%s", result.safety_failed_count)
     logger.info("rows_written=%s", result.rows_written)
     print(f"Wrote {result.rows_written} rows to {result.output_path}")
 
