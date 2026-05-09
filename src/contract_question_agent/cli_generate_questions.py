@@ -20,7 +20,7 @@ from contract_question_agent.schemas import (
     VerificationQuestion,
     VerificationQuestionOutput,
 )
-from contract_question_agent.workflows import run_linear_workflow
+from contract_question_agent.workflows import run_workflow
 
 
 class DryRunQuestionClient:
@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    load_dotenv(dotenv_path=Path.cwd() / ".env")
+    load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     args = build_parser().parse_args(argv)
     request = GenerateQuestionsRequest(
         input_path=args.input,
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> None:
             model_client = OpenRouterQuestionClient(model_name=request.model_name)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-    result = run_linear_workflow(request, model_client=model_client)
+    result = run_workflow(request, model_client=model_client)
     print(f"Wrote {result.rows_written} rows to {result.output_path}")
 
 

@@ -34,18 +34,16 @@ def test_safety_check_passes_when_no_banned_phrase():
     assert checked.safety_disclaimer == SAFETY_DISCLAIMER
 
 
-def test_safety_check_flags_banned_phrase_case_insensitively():
-    checked = apply_safety_check(_output("THIS CLAUSE IS ENFORCEABLE."))
+def test_safety_check_flags_generated_banned_phrase_case_insensitively():
+    checked = apply_safety_check(_output("YOU SHOULD SIGN."))
 
     assert checked.safety_status == "failed"
-    assert checked.safety_warnings == [
-        "banned phrase found: this clause is enforceable"
-    ]
+    assert checked.safety_warnings == ["banned phrase found: you should sign"]
     assert checked.safety_disclaimer == SAFETY_DISCLAIMER
 
 
 def test_safety_check_excludes_evidence_text():
-    checked = apply_safety_check(_output_with_evidence("This clause is enforceable."))
+    checked = apply_safety_check(_output_with_evidence("You should sign."))
 
     assert checked.safety_status == "passed"
     assert checked.safety_warnings == []

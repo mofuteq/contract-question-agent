@@ -27,8 +27,9 @@ that produces JSONL files filtered to eight clause types relevant to the
 project's first evaluation milestone.
 
 **v0.2 adds a deliberately poor end-to-end path** from CUAD
-`clause_spans.jsonl` to structured `verification_questions.jsonl`. It uses a
-linear Microsoft Agent Framework workflow, a Microsoft Agent Framework
+`clause_spans.jsonl` to structured `verification_questions.jsonl`. The v0.2
+workflow is currently implemented with Microsoft Agent Framework, while
+business logic is kept in framework-independent nodes. It uses an
 OpenAI-compatible Agent for OpenRouter generation, deterministic CLI
 filtering, one minimal model call per clause span, Pydantic validation, and a
 rule-based banned-phrase safety check. It is meant to reveal failure patterns,
@@ -46,13 +47,16 @@ src/contract_question_agent/
   cuad_downloader.py  # optional downloader
   cuad_loader.py      # parser + JSONL writer
   cli_generate_questions.py
-  workflows/
   model_client/
+  workflows/
+    workflow.py       # Microsoft Agent Framework adapter / graph wiring
+    nodes/            # framework-independent state transitions
 tests/
   test_cuad_downloader.py
   test_cuad_loader.py
   test_generate_questions_cli.py
-  test_microsoft_linear_workflow.py
+  test_workflow.py
+  test_openrouter_client.py
   test_safety.py
   test_schemas.py
 ```
@@ -134,6 +138,9 @@ You may also set `OPENROUTER_MODEL`, or pass `--model` to override both the
 environment variable and the default:
 
 ```bash
+cp .env.example .env
+# Edit .env with your OpenRouter key. .env is gitignored and must not be committed.
+
 export OPENROUTER_API_KEY="..."
 export OPENROUTER_MODEL="google/gemini-3-flash-preview"
 
@@ -146,14 +153,15 @@ uv run contract-question-generate \
 
 The default OpenRouter model is configured in
 `src/contract_question_agent/model_client/openrouter.py` and can be overridden
-with `OPENROUTER_MODEL` or `--model`. Tests use fake clients and do not call
-the network.
+with `OPENROUTER_MODEL` or `--model`. `OPENROUTER_API_KEY` is required for real
+model calls; `OPENROUTER_MODEL` is optional. Tests use fake clients and do not
+call the network.
 
-The workflow calls `OpenRouterQuestionClient.generate()` once per filtered
-clause span. If `--limit 1` produces one output row but OpenRouter or provider
-logs show two upstream requests, the duplicate request is likely inside the
-Microsoft Agent Framework Agent structured-output path or provider-side
-handling, not the v0.2 workflow wiring.
+The workflow calls `model_client.generate()` once per filtered clause span. If
+`--limit 1` produces one output row but OpenRouter or provider logs show two
+upstream requests, the duplicate request is likely inside the Microsoft Agent
+Framework Agent structured-output path or provider-side handling, not the v0.2
+workflow wiring.
 
 You can also put the same values in a local `.env` file:
 

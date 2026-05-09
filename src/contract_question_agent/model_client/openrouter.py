@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 import os
 import warnings
-from pathlib import Path
 from typing import Any
 
 warnings.filterwarnings("ignore", message=r".*is experimental.*")
 
 from agent_framework import Agent
 from agent_framework_openai import OpenAIChatClient
-from dotenv import load_dotenv
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER
@@ -38,12 +36,11 @@ class OpenRouterQuestionClient:
         self,
         *,
         api_key: str | None = None,
-        model_name: str = DEFAULT_OPENROUTER_MODEL,
+        model_name: str | None = None,
         agent: Agent | None = None,
     ) -> None:
-        load_dotenv(dotenv_path=Path.cwd() / ".env")
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
         self.call_count = 0
         if not self.api_key:
             raise ValueError(

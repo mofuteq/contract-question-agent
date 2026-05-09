@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 from types import SimpleNamespace
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
@@ -84,12 +84,35 @@ def test_openrouter_client_parses_raw_json_text():
     assert output.model_name == "raw-model"
 
 
-def test_openrouter_client_reads_api_key_from_dotenv(tmp_path, monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=dotenv-key\n", encoding="utf-8")
+def test_openrouter_client_validates_dict_like_response_value():
+    payload = _output().model_copy(update={"model_name": "dict-model"}).model_dump()
+    agent = FakeAgent(SimpleNamespace(value=payload, text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    output = asyncio.run(client.generate(_span()))
+
+    assert output.contract_id == "C1"
+    assert output.model_name == "dict-model"
+
+
+def test_openrouter_client_reads_api_key_from_environment(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
     agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
 
     client = OpenRouterQuestionClient(model_name="test-model", agent=agent)
 
-    assert client.api_key == "dotenv-key"
+    assert client.api_key == "env-key"
+
+
+def test_openrouter_client_reads_model_from_environment(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "env-model")
+    agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
+
+    client = OpenRouterQuestionClient(agent=agent)
+
+    assert client.model_name == "env-model"

@@ -11,8 +11,8 @@ from contract_question_agent.schemas import (
     VerificationQuestion,
     VerificationQuestionOutput,
 )
-from contract_question_agent.workflows import run_linear_workflow
-from contract_question_agent.workflows.nodes import filter_clause_spans
+from contract_question_agent.workflows import run_workflow
+from contract_question_agent.workflows.nodes.filter_records import filter_clause_spans
 
 
 class FakeQuestionClient:
@@ -93,7 +93,7 @@ def test_filter_records_is_deterministic_for_cli_args():
     ) == [records[2]]
 
 
-def test_workflow_e2e_writes_valid_jsonl_with_fake_model(tmp_path):
+def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
     _write_spans(
@@ -115,7 +115,7 @@ def test_workflow_e2e_writes_valid_jsonl_with_fake_model(tmp_path):
     )
 
     fake_client = FakeQuestionClient()
-    result = run_linear_workflow(request, model_client=fake_client)
+    result = run_workflow(request, model_client=fake_client)
 
     assert result.rows_written == 1
     assert fake_client.call_count == 1
@@ -127,3 +127,32 @@ def test_workflow_e2e_writes_valid_jsonl_with_fake_model(tmp_path):
     assert rows[0].contract_id == "C3"
     assert rows[0].safety_status == "passed"
     assert rows[0].safety_disclaimer == SAFETY_DISCLAIMER
+
+
+def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    _write_spans(
+        input_path,
+        [
+            _span("C1", "Non-Compete", "Do not compete."),
+            _span("C2", "Non-Compete", "Do not solicit customers."),
+            _span("C3", "Non-Compete", "Do not use confidential information."),
+            _span("C4", "Governing Law", "Delaware law."),
+        ],
+    )
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        clause_type="Non-Compete",
+        limit=3,
+        model_name="fake-model",
+        dry_run=True,
+    )
+
+    fake_client = FakeQuestionClient()
+    result = run_workflow(request, model_client=fake_client)
+
+    assert result.rows_written == 3
+    assert fake_client.call_count == 3
+    assert len(output_path.read_text(encoding="utf-8").splitlines()) == 3

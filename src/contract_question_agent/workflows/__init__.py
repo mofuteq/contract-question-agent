@@ -4,6 +4,6 @@ import warnings
 
 warnings.filterwarnings("ignore", message=r".*is experimental.*")
 
-from contract_question_agent.workflows.workflow import run_linear_workflow
+from contract_question_agent.workflows.workflow import build_workflow, run_workflow
 
-__all__ = ["run_linear_workflow"]
+__all__ = ["build_workflow", "run_workflow"]

@@ -145,5 +145,79 @@ def test_cli_dry_run_uses_dotenv_model(tmp_path, monkeypatch):
     assert row.model_name == "dotenv-model"
 
 
+def test_cli_env_model_takes_precedence_over_dotenv(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL", "env-model")
+    monkeypatch.chdir(tmp_path)
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    record = ClauseSpanRecord(
+        contract_id="C1",
+        source_file="C1.txt",
+        clause_type="Non-Compete",
+        evidence_text="Employee will not compete.",
+        start_char=0,
+        end_char=26,
+        label_present=True,
+    )
+    input_path.write_text(f"{record.model_dump_json()}\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        "OPENROUTER_MODEL=dotenv-model\n",
+        encoding="utf-8",
+    )
+
+    main(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--dry-run",
+        ]
+    )
+
+    row = VerificationQuestionOutput.model_validate_json(
+        output_path.read_text(encoding="utf-8").strip()
+    )
+    assert row.model_name == "env-model"
+
+
+def test_cli_model_arg_takes_precedence_over_env_and_dotenv(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL", "env-model")
+    monkeypatch.chdir(tmp_path)
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    record = ClauseSpanRecord(
+        contract_id="C1",
+        source_file="C1.txt",
+        clause_type="Non-Compete",
+        evidence_text="Employee will not compete.",
+        start_char=0,
+        end_char=26,
+        label_present=True,
+    )
+    input_path.write_text(f"{record.model_dump_json()}\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        "OPENROUTER_MODEL=dotenv-model\n",
+        encoding="utf-8",
+    )
+
+    main(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--model",
+            "cli-model",
+            "--dry-run",
+        ]
+    )
+
+    row = VerificationQuestionOutput.model_validate_json(
+        output_path.read_text(encoding="utf-8").strip()
+    )
+    assert row.model_name == "cli-model"
+
+
 def test_default_openrouter_model_is_gemini_3_flash_preview():
     assert DEFAULT_OPENROUTER_MODEL == "google/gemini-3-flash-preview"
