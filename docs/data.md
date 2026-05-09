@@ -11,7 +11,13 @@ with researchers at UC Berkeley, in support of the NeurIPS 2021 paper
 
 Project home: https://www.atticusprojectai.org/cuad
 Source repository: https://github.com/TheAtticusProject/cuad
-HuggingFace mirror: https://huggingface.co/datasets/theatticusproject/cuad-qa
+Hugging Face dataset: https://huggingface.co/datasets/theatticusproject/cuad
+
+A separate Hugging Face dataset,
+[`theatticusproject/cuad-qa`](https://huggingface.co/datasets/theatticusproject/cuad-qa),
+exposes CUAD reshaped as SQuAD-style QA examples. The downloader in
+this project targets the primary `theatticusproject/cuad` dataset, not
+the `cuad-qa` QA variant.
 
 The dataset is distributed as a SQuAD-style JSON file
 (`CUAD_v1.json`), where every contract appears once and each of the 41
@@ -116,10 +122,18 @@ The `data/cuad/raw/` and `data/cuad/processed/` directories are gitignored.
 
 ## Running the loader
 
-Once `pip install -e ".[dev]"` has installed the package:
+After cloning the repository, set up the environment with uv (which
+installs Python 3.13.13 from `.python-version` and resolves
+dependencies from `uv.lock`):
 
 ```bash
-python -m contract_question_agent.cuad_loader \
+uv sync
+```
+
+Then run the loader against a local CUAD payload:
+
+```bash
+uv run cuad-loader \
   --input data/cuad/raw/CUAD_v1.json \
   --output-dir data/cuad/processed
 ```
