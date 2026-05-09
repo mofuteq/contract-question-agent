@@ -10,7 +10,11 @@ from contract_question_agent.schemas import GenerateQuestionsRequest, LoadedClau
 
 def load_clause_spans_node(request: GenerateQuestionsRequest) -> LoadedClauseSpans:
     records = read_clause_spans_jsonl(request.input_path)
-    return LoadedClauseSpans(request=request, records=records)
+    return LoadedClauseSpans(
+        request=request,
+        records=records,
+        rows_read=len(records),
+    )
 
 
 def read_clause_spans_jsonl(path: Path) -> list[ClauseSpanRecord]:

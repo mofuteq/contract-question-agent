@@ -169,12 +169,18 @@ run.log
 ```
 
 `verification_questions.jsonl` contains the structured outputs.
-`run_metadata.json` records the run settings and row count. `run.log` records
-safe lifecycle events and row counts without logging API keys, clause text, or
-model output. Use `--output-dir` to change the parent directory, `--run-id` for
-deterministic or manual run names, and `--verbose` for DEBUG logs. The command
-fails if the run directory already exists, so previous runs are not silently
-overwritten.
+`run_metadata.json` records the run settings and row-count metrics:
+`rows_read`, `rows_filtered`, `rows_generated`, `safety_failed_count`, and
+`rows_written`. `run.log` records the same safe lifecycle events and row counts
+without logging API keys, clause text, or model output. Use `--output-dir` to
+change the parent directory, `--run-id` for deterministic or manual run names,
+and `--verbose` for DEBUG logs. The command fails if the run directory already
+exists, so previous runs are not silently overwritten.
+
+Debug logs may mention `httpx` because the underlying Microsoft Agent Framework
+OpenAI-compatible client may use an HTTP transport internally. This project
+does not use a hand-written `httpx` OpenRouter client; OpenRouter calls go
+through the Microsoft Agent Framework OpenAI-compatible Agent.
 
 The default OpenRouter model is configured in
 `src/contract_question_agent/model_client/openrouter.py` and can be overridden

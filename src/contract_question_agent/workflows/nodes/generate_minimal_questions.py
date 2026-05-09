@@ -14,4 +14,10 @@ async def generate_minimal_questions_node(
     model_client: QuestionModelClient,
 ) -> GeneratedQuestions:
     outputs = [await model_client.generate(record) for record in state.records]
-    return GeneratedQuestions(request=state.request, outputs=outputs)
+    return GeneratedQuestions(
+        request=state.request,
+        outputs=outputs,
+        rows_read=state.rows_read,
+        rows_filtered=state.rows_filtered,
+        rows_generated=len(outputs),
+    )

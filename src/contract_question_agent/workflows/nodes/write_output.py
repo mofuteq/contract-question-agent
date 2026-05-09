@@ -27,6 +27,10 @@ def write_output_node(state: SafetyCheckedQuestions) -> WrittenQuestions:
         offset=state.request.offset,
         model_name=state.request.model_name,
         dry_run=state.request.dry_run,
+        rows_read=state.rows_read,
+        rows_filtered=state.rows_filtered,
+        rows_generated=state.rows_generated,
+        safety_failed_count=state.safety_failed_count,
         rows_written=len(state.outputs),
     )
     write_run_metadata_json(state.request.metadata_path, metadata)
@@ -34,6 +38,10 @@ def write_output_node(state: SafetyCheckedQuestions) -> WrittenQuestions:
         output_path=state.request.output_path,
         metadata_path=state.request.metadata_path,
         log_path=state.request.log_path,
+        rows_read=state.rows_read,
+        rows_filtered=state.rows_filtered,
+        rows_generated=state.rows_generated,
+        safety_failed_count=state.safety_failed_count,
         rows_written=len(state.outputs),
         outputs=state.outputs,
     )

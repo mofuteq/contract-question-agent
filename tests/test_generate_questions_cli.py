@@ -110,9 +110,17 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
     assert metadata["offset"] == 0
     assert metadata["model_name"] == DEFAULT_OPENROUTER_MODEL
     assert metadata["dry_run"] is True
+    assert metadata["rows_read"] == 2
+    assert metadata["rows_filtered"] == 1
+    assert metadata["rows_generated"] == 1
+    assert metadata["safety_failed_count"] == 0
     assert metadata["rows_written"] == 1
     assert "T" in metadata["created_at"]
     assert "run_id=test-run" in log_text
+    assert "rows_read=2" in log_text
+    assert "rows_filtered=1" in log_text
+    assert "rows_generated=1" in log_text
+    assert "safety_failed_count=0" in log_text
     assert "rows_written=1" in log_text
     assert "OPENROUTER_API_KEY" not in log_text
     assert "Employee will not compete" not in log_text

@@ -14,7 +14,12 @@ def filter_records_node(state: LoadedClauseSpans) -> FilteredClauseSpans:
         limit=state.request.limit,
         offset=state.request.offset,
     )
-    return FilteredClauseSpans(request=state.request, records=records)
+    return FilteredClauseSpans(
+        request=state.request,
+        records=records,
+        rows_read=state.rows_read,
+        rows_filtered=len(records),
+    )
 
 
 def filter_clause_spans(

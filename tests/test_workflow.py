@@ -18,8 +18,9 @@ from contract_question_agent.workflows.nodes.filter_records import filter_clause
 class FakeQuestionClient:
     model_name = "fake-model"
 
-    def __init__(self) -> None:
+    def __init__(self, *, unsafe: bool = False) -> None:
         self.call_count = 0
+        self.unsafe = unsafe
 
     async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
         self.call_count += 1
@@ -27,7 +28,7 @@ class FakeQuestionClient:
             contract_id=record.contract_id,
             clause_type=record.clause_type,
             evidence_text=record.evidence_text,
-            unknowns=["Unknown business context."],
+            unknowns=["You should sign." if self.unsafe else "Unknown business context."],
             decision_risks=["Potential operational impact."],
             legal_review_questions=[
                 LegalReviewQuestion(
@@ -125,6 +126,10 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
 
     assert result.rows_written == 1
     assert result.metadata_path == metadata_path
+    assert result.rows_read == 3
+    assert result.rows_filtered == 1
+    assert result.rows_generated == 1
+    assert result.safety_failed_count == 0
     assert fake_client.call_count == 1
     rows = [
         VerificationQuestionOutput.model_validate(json.loads(line))
@@ -167,5 +172,44 @@ def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
     result = run_workflow(request, model_client=fake_client)
 
     assert result.rows_written == 3
+    assert result.rows_read == 4
+    assert result.rows_filtered == 3
+    assert result.rows_generated == 3
+    assert result.safety_failed_count == 0
     assert fake_client.call_count == 3
     assert len(output_path.read_text(encoding="utf-8").splitlines()) == 3
+
+
+def test_run_workflow_metadata_records_safety_failure_count(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(input_path, [_span("C1", "Non-Compete", "Do not compete.")])
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        limit=1,
+        model_name="fake-model",
+        dry_run=True,
+    )
+
+    result = run_workflow(request, model_client=FakeQuestionClient(unsafe=True))
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    rows = [
+        VerificationQuestionOutput.model_validate(json.loads(line))
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.safety_failed_count == 1
+    assert metadata["rows_read"] == 1
+    assert metadata["rows_filtered"] == 1
+    assert metadata["rows_generated"] == 1
+    assert metadata["safety_failed_count"] == 1
+    assert metadata["rows_written"] == 1
+    assert rows[0].safety_status == "failed"

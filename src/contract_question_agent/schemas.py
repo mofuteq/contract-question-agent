@@ -57,27 +57,41 @@ class GenerateQuestionsRequest(_StrictModel):
 class LoadedClauseSpans(_StrictModel):
     request: GenerateQuestionsRequest
     records: list[ClauseSpanRecord]
+    rows_read: NonNegativeInt
 
 
 class FilteredClauseSpans(_StrictModel):
     request: GenerateQuestionsRequest
     records: list[ClauseSpanRecord]
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
 
 
 class GeneratedQuestions(_StrictModel):
     request: GenerateQuestionsRequest
     outputs: list[VerificationQuestionOutput]
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
+    rows_generated: NonNegativeInt
 
 
 class SafetyCheckedQuestions(_StrictModel):
     request: GenerateQuestionsRequest
     outputs: list[VerificationQuestionOutput]
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
+    rows_generated: NonNegativeInt
+    safety_failed_count: NonNegativeInt
 
 
 class WrittenQuestions(_StrictModel):
     output_path: Path
     metadata_path: Path
     log_path: Path
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
+    rows_generated: NonNegativeInt
+    safety_failed_count: NonNegativeInt
     rows_written: int
     outputs: list[VerificationQuestionOutput] = Field(default_factory=list)
 
@@ -95,6 +109,10 @@ class RunMetadata(_StrictModel):
     offset: NonNegativeInt
     model_name: str
     dry_run: bool
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
+    rows_generated: NonNegativeInt
+    safety_failed_count: NonNegativeInt
     rows_written: NonNegativeInt
 
 

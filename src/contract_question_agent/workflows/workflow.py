@@ -42,7 +42,7 @@ def build_workflow(*, model_client: QuestionModelClient):
         ctx: WorkflowContext[LoadedClauseSpans, Never],
     ) -> None:
         state = nodes.load_clause_spans_node(request)
-        logger.info("rows_read=%s", len(state.records))
+        logger.info("rows_read=%s", state.rows_read)
         await ctx.send_message(state)
 
     async def filter_node_func(
@@ -50,7 +50,7 @@ def build_workflow(*, model_client: QuestionModelClient):
         ctx: WorkflowContext[FilteredClauseSpans, Never],
     ) -> None:
         filtered = nodes.filter_records_node(state)
-        logger.info("rows_filtered=%s", len(filtered.records))
+        logger.info("rows_filtered=%s", filtered.rows_filtered)
         await ctx.send_message(filtered)
 
     async def generate_node(
@@ -58,7 +58,7 @@ def build_workflow(*, model_client: QuestionModelClient):
         ctx: WorkflowContext[GeneratedQuestions, Never],
     ) -> None:
         generated = await nodes.generate_minimal_questions_node(state, model_client)
-        logger.info("rows_generated=%s", len(generated.outputs))
+        logger.info("rows_generated=%s", generated.rows_generated)
         await ctx.send_message(generated)
 
     async def safety_node(
@@ -66,10 +66,7 @@ def build_workflow(*, model_client: QuestionModelClient):
         ctx: WorkflowContext[SafetyCheckedQuestions, Never],
     ) -> None:
         checked = nodes.safety_check_node(state)
-        safety_failed_count = sum(
-            1 for output in checked.outputs if output.safety_status == "failed"
-        )
-        logger.info("safety_failed_count=%s", safety_failed_count)
+        logger.info("safety_failed_count=%s", checked.safety_failed_count)
         await ctx.send_message(checked)
 
     async def write_node(
