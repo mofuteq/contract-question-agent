@@ -10,11 +10,16 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [{ name = "contract-question-agent contributors" }]
-dependencies = ["pydantic>=2"]
+dependencies = [
+    "agent-framework-core>=1.3.0",
+    "httpx>=0.28.1",
+    "pydantic>=2",
+]
 
 [project.scripts]
 cuad-loader = "contract_question_agent.cuad_loader:main"
 cuad-downloader = "contract_question_agent.cuad_downloader:main"
+contract-question-generate = "contract_question_agent.cli_generate_questions:main"
 
 [dependency-groups]
 dev = ["pytest>=7"]
