@@ -6,6 +6,8 @@ import argparse
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.model_client import (
     DEFAULT_OPENROUTER_MODEL,
@@ -83,6 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    load_dotenv(dotenv_path=Path.cwd() / ".env")
     args = build_parser().parse_args(argv)
     request = GenerateQuestionsRequest(
         input_path=args.input,

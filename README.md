@@ -135,7 +135,7 @@ environment variable and the default:
 
 ```bash
 export OPENROUTER_API_KEY="..."
-export OPENROUTER_MODEL="google/gemini-2.5-pro"
+export OPENROUTER_MODEL="google/gemini-3-flash-preview"
 
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
@@ -148,6 +148,13 @@ The default OpenRouter model is configured in
 `src/contract_question_agent/model_client/openrouter.py` and can be overridden
 with `OPENROUTER_MODEL` or `--model`. Tests use fake clients and do not call
 the network.
+
+You can also put the same values in a local `.env` file:
+
+```env
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=google/gemini-3-flash-preview
+```
 
 ## Scope and disclaimers
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import warnings
+from pathlib import Path
 from typing import Any
 
 warnings.filterwarnings("ignore", message=r".*is experimental.*")
@@ -18,7 +19,7 @@ from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import VerificationQuestionOutput
 
 
-DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-pro"
+DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = (
@@ -40,7 +41,7 @@ class OpenRouterQuestionClient:
         model_name: str = DEFAULT_OPENROUTER_MODEL,
         agent: Agent | None = None,
     ) -> None:
-        load_dotenv()
+        load_dotenv(dotenv_path=Path.cwd() / ".env")
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name
         if not self.api_key:
