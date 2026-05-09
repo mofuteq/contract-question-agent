@@ -20,8 +20,31 @@ spans in the contract text.
 
 ## License and attribution
 
+### Summary
+
+| What | License | Where it lives |
+|---|---|---|
+| **Source code** in this repository (`src/`, `tests/`, configs, docs) | **MIT** (see [`LICENSE`](../LICENSE)) | committed |
+| **CUAD raw dataset** (`CUAD_v1.json`, `CUAD_v1.zip`) | **CC BY 4.0** (© The Atticus Project) | **never committed** — `data/cuad/raw/` is gitignored |
+| **CUAD-derived files** generated locally (`contracts.jsonl`, `labels.jsonl`, `clause_spans.jsonl`) | **CC BY 4.0** (derivative of CUAD) | **never committed** — `data/cuad/processed/` is gitignored |
+
+Rules of thumb:
+
+* The repository **does not redistribute CUAD or any file derived from it**.
+  Both `data/cuad/raw/` and `data/cuad/processed/` are gitignored. Do not
+  commit downloaded payloads or loader outputs, and do not add example
+  fixtures that quote CUAD contract text.
+* **Tests and code samples must use self-authored dummy text** (or other
+  data whose license you can satisfy), unless an attribution path for
+  CUAD-derived content has been explicitly arranged for the artifact in
+  question.
+* This project is **not affiliated with or endorsed by The Atticus Project**.
+
+### CUAD attribution requirements
+
 CUAD is released under the **Creative Commons Attribution 4.0 International
-license (CC BY 4.0)**. Anyone redistributing CUAD or derivative data must:
+license (CC BY 4.0)**. Anyone redistributing CUAD or files derived from it
+(including the JSONL produced by this loader) must:
 
 1. Provide attribution to The Atticus Project.
 2. Indicate if changes were made.

@@ -88,3 +88,11 @@ See [docs/data.md](docs/data.md) for licensing and attribution requirements.
 - Any future-generated verification questions are conversation starters
   for review by a qualified legal professional, not conclusions.
 - CUAD is © The Atticus Project, distributed under CC BY 4.0.
+
+## License
+
+The source code in this repository is licensed under the MIT License.
+
+CUAD data is not redistributed in this repository. CUAD is provided by The Atticus Project under the Creative Commons Attribution 4.0 International License (CC BY 4.0). Any CUAD-derived files generated locally remain subject to CUAD's attribution requirements.
+
+This project is not affiliated with or endorsed by The Atticus Project.
