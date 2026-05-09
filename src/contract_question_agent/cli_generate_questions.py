@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
@@ -26,7 +27,7 @@ class DryRunQuestionClient:
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
 
-    def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
         return VerificationQuestionOutput(
             contract_id=record.contract_id,
             clause_type=record.clause_type,
@@ -76,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contract-id")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--offset", type=int, default=0)
-    parser.add_argument("--model", default=DEFAULT_OPENROUTER_MODEL)
+    parser.add_argument("--model")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -90,14 +91,14 @@ def main(argv: list[str] | None = None) -> None:
         contract_id=args.contract_id,
         limit=args.limit,
         offset=args.offset,
-        model_name=args.model,
+        model_name=args.model or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
         dry_run=args.dry_run,
     )
     if args.dry_run:
-        model_client = DryRunQuestionClient(args.model)
+        model_client = DryRunQuestionClient(request.model_name)
     else:
         try:
-            model_client = OpenRouterQuestionClient(model_name=args.model)
+            model_client = OpenRouterQuestionClient(model_name=request.model_name)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     result = run_linear_workflow(request, model_client=model_client)

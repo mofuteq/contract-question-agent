@@ -70,7 +70,7 @@ def test_cli_without_dry_run_requires_openrouter_key(tmp_path, monkeypatch):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
     input_path.write_text("", encoding="utf-8")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
 
     try:
         main(["--input", str(input_path), "--output", str(output_path)])
@@ -78,3 +78,34 @@ def test_cli_without_dry_run_requires_openrouter_key(tmp_path, monkeypatch):
         assert str(exc) == "OPENROUTER_API_KEY is required unless --dry-run is set."
     else:
         raise AssertionError("Expected SystemExit for missing OPENROUTER_API_KEY.")
+
+
+def test_cli_dry_run_uses_openrouter_model_env(tmp_path, monkeypatch):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    record = ClauseSpanRecord(
+        contract_id="C1",
+        source_file="C1.txt",
+        clause_type="Non-Compete",
+        evidence_text="Employee will not compete.",
+        start_char=0,
+        end_char=26,
+        label_present=True,
+    )
+    input_path.write_text(f"{record.model_dump_json()}\n", encoding="utf-8")
+    monkeypatch.setenv("OPENROUTER_MODEL", "env-model")
+
+    main(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--dry-run",
+        ]
+    )
+
+    row = VerificationQuestionOutput.model_validate_json(
+        output_path.read_text(encoding="utf-8").strip()
+    )
+    assert row.model_name == "env-model"

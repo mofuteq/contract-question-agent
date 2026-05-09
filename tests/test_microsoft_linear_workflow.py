@@ -11,16 +11,14 @@ from contract_question_agent.schemas import (
     VerificationQuestion,
     VerificationQuestionOutput,
 )
-from contract_question_agent.workflows.microsoft_linear_workflow import (
-    filter_clause_spans,
-    run_linear_workflow,
-)
+from contract_question_agent.workflows import run_linear_workflow
+from contract_question_agent.workflows.nodes import filter_clause_spans
 
 
 class FakeQuestionClient:
     model_name = "fake-model"
 
-    def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
         return VerificationQuestionOutput(
             contract_id=record.contract_id,
             clause_type=record.clause_type,

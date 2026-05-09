@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from typing import Any
 
-import httpx
+warnings.filterwarnings("ignore", message=r".*is experimental.*")
+
+from agent_framework import Agent
+from agent_framework_openai import OpenAIChatClient
+from dotenv import load_dotenv
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER
@@ -14,7 +19,7 @@ from contract_question_agent.schemas import VerificationQuestionOutput
 
 
 DEFAULT_OPENROUTER_MODEL = "google/gemini-2.5-pro"
-OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = (
     "Generate verification questions for a contract clause. Do not provide legal "
@@ -26,74 +31,76 @@ SYSTEM_PROMPT = (
 
 
 class OpenRouterQuestionClient:
-    """Minimal OpenRouter chat-completions client using structured JSON output."""
+    """OpenRouter generation client backed by a Microsoft Agent Framework Agent."""
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
         model_name: str = DEFAULT_OPENROUTER_MODEL,
-        timeout: float = 60.0,
+        agent: Agent | None = None,
     ) -> None:
+        load_dotenv()
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name
-        self.timeout = timeout
         if not self.api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY is required unless --dry-run is set."
             )
+        self.agent = agent or OpenAIChatClient(
+            model=self.model_name,
+            api_key=self.api_key,
+            base_url=OPENROUTER_BASE_URL,
+        ).as_agent(
+            id="openrouter-verification-question-agent",
+            name="OpenRouter verification question agent",
+            instructions=SYSTEM_PROMPT,
+        )
 
-    def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
-        payload = {
-            "model": self.model_name,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+        response = await self.agent.run(
+            json.dumps(
                 {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "contract_id": record.contract_id,
-                            "clause_type": record.clause_type,
-                            "evidence_text": record.evidence_text,
-                        },
-                        ensure_ascii=True,
-                    ),
+                    "contract_id": record.contract_id,
+                    "clause_type": record.clause_type,
+                    "evidence_text": record.evidence_text,
                 },
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "verification_question_output",
-                    "strict": True,
-                    "schema": VerificationQuestionOutput.model_json_schema(),
-                },
-            },
-        }
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                OPENROUTER_CHAT_COMPLETIONS_URL,
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-        content = _extract_content(response.json())
-        parsed = json.loads(content)
-        parsed.setdefault("safety_disclaimer", SAFETY_DISCLAIMER)
-        parsed.setdefault("safety_status", "unchecked")
-        parsed.setdefault("safety_warnings", [])
-        parsed.setdefault("model_name", self.model_name)
-        return VerificationQuestionOutput.model_validate(parsed)
+                ensure_ascii=True,
+            ),
+            options={"response_format": VerificationQuestionOutput},
+        )
+        return _coerce_agent_response(response, self.model_name)
 
 
-def _extract_content(payload: dict[str, Any]) -> str:
-    try:
-        content = payload["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ValueError("OpenRouter response did not contain message content") from exc
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError("OpenRouter response message content was empty")
-    return content
+def _coerce_agent_response(response: Any, model_name: str) -> VerificationQuestionOutput:
+    value = getattr(response, "value", None)
+    if isinstance(value, VerificationQuestionOutput):
+        return _with_generation_defaults(value, model_name)
+    if value is not None:
+        return _with_generation_defaults(
+            VerificationQuestionOutput.model_validate(value),
+            model_name,
+        )
+
+    text = getattr(response, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("OpenRouter agent response did not contain structured output.")
+    parsed = json.loads(text)
+    return _with_generation_defaults(
+        VerificationQuestionOutput.model_validate(parsed),
+        model_name,
+    )
+
+
+def _with_generation_defaults(
+    output: VerificationQuestionOutput,
+    model_name: str,
+) -> VerificationQuestionOutput:
+    return output.model_copy(
+        update={
+            "safety_disclaimer": output.safety_disclaimer or SAFETY_DISCLAIMER,
+            "safety_status": output.safety_status or "unchecked",
+            "safety_warnings": output.safety_warnings or [],
+            "model_name": output.model_name or model_name,
+        }
+    )

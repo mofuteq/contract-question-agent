@@ -1,16 +1,12 @@
-"""Poor v0.2 E2E linear workflow using Microsoft Agent Framework executors."""
+"""Node internals for the v0.2 Microsoft Agent Framework workflow."""
 
 from __future__ import annotations
 
-import asyncio
 import json
-import warnings
 from pathlib import Path
 from typing import Never
 
-warnings.filterwarnings("ignore", message=r".*is experimental.*")
-
-from agent_framework import FunctionExecutor, WorkflowBuilder, WorkflowContext
+from agent_framework import WorkflowContext
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import apply_safety_check
@@ -25,54 +21,7 @@ from contract_question_agent.schemas import (
 )
 
 
-def run_linear_workflow(
-    request: GenerateQuestionsRequest,
-    *,
-    model_client: QuestionModelClient,
-) -> WrittenQuestions:
-    """Run LOAD -> FILTER -> GENERATE -> SAFETY -> WRITE -> DONE."""
-    workflow = build_linear_workflow(model_client=model_client)
-    result = asyncio.run(workflow.run(request))
-    outputs = result.get_outputs()
-    if len(outputs) != 1 or not isinstance(outputs[0], WrittenQuestions):
-        raise RuntimeError("Microsoft linear workflow did not produce one DONE output.")
-    return outputs[0]
-
-
-def build_linear_workflow(*, model_client: QuestionModelClient):
-    async def generate_minimal_questions(
-        state: FilteredClauseSpans,
-        ctx: WorkflowContext[GeneratedQuestions, Never],
-    ) -> None:
-        await _generate_minimal_questions(state, ctx, model_client)
-
-    load = FunctionExecutor(_load_clause_spans, id="LOAD_CLAUSE_SPANS")
-    filter_records = FunctionExecutor(_filter_records, id="FILTER_RECORDS")
-    generate = FunctionExecutor(
-        generate_minimal_questions,
-        id="GENERATE_MINIMAL_QUESTIONS",
-    )
-    safety = FunctionExecutor(_safety_check, id="SAFETY_CHECK")
-    write = FunctionExecutor(_write_output, id="WRITE_OUTPUT")
-    done = FunctionExecutor(_done, id="DONE")
-
-    return (
-        WorkflowBuilder(
-            start_executor=load,
-            name="contract-question-agent-v0.2-poor-e2e",
-            description="Linear CUAD clause span to verification question JSONL workflow.",
-            output_executors=[done],
-        )
-        .add_edge(load, filter_records)
-        .add_edge(filter_records, generate)
-        .add_edge(generate, safety)
-        .add_edge(safety, write)
-        .add_edge(write, done)
-        .build()
-    )
-
-
-async def _load_clause_spans(
+async def load_clause_spans(
     request: GenerateQuestionsRequest,
     ctx: WorkflowContext[LoadedClauseSpans, Never],
 ) -> None:
@@ -80,7 +29,7 @@ async def _load_clause_spans(
     await ctx.send_message(LoadedClauseSpans(request=request, records=records))
 
 
-async def _filter_records(
+async def filter_records(
     state: LoadedClauseSpans,
     ctx: WorkflowContext[FilteredClauseSpans, Never],
 ) -> None:
@@ -94,16 +43,16 @@ async def _filter_records(
     await ctx.send_message(FilteredClauseSpans(request=state.request, records=records))
 
 
-async def _generate_minimal_questions(
+async def generate_minimal_questions(
     state: FilteredClauseSpans,
     ctx: WorkflowContext[GeneratedQuestions, Never],
     model_client: QuestionModelClient,
 ) -> None:
-    outputs = [model_client.generate(record) for record in state.records]
+    outputs = [await model_client.generate(record) for record in state.records]
     await ctx.send_message(GeneratedQuestions(request=state.request, outputs=outputs))
 
 
-async def _safety_check(
+async def safety_check(
     state: GeneratedQuestions,
     ctx: WorkflowContext[SafetyCheckedQuestions, Never],
 ) -> None:
@@ -111,7 +60,7 @@ async def _safety_check(
     await ctx.send_message(SafetyCheckedQuestions(request=state.request, outputs=outputs))
 
 
-async def _write_output(
+async def write_output(
     state: SafetyCheckedQuestions,
     ctx: WorkflowContext[WrittenQuestions, Never],
 ) -> None:
@@ -125,7 +74,7 @@ async def _write_output(
     )
 
 
-async def _done(
+async def done(
     state: WrittenQuestions,
     ctx: WorkflowContext[Never, WrittenQuestions],
 ) -> None:

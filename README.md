@@ -28,10 +28,11 @@ project's first evaluation milestone.
 
 **v0.2 adds a deliberately poor end-to-end path** from CUAD
 `clause_spans.jsonl` to structured `verification_questions.jsonl`. It uses a
-linear Microsoft Agent Framework workflow, deterministic CLI filtering, one
-minimal model call per clause span, Pydantic validation, and a rule-based
-banned-phrase safety check. It is meant to reveal failure patterns, not to
-produce high-quality legal review output.
+linear Microsoft Agent Framework workflow, a Microsoft Agent Framework
+OpenAI-compatible Agent for OpenRouter generation, deterministic CLI
+filtering, one minimal model call per clause span, Pydantic validation, and a
+rule-based banned-phrase safety check. It is meant to reveal failure patterns,
+not to produce high-quality legal review output.
 
 ## Layout
 
@@ -128,10 +129,13 @@ uv run contract-question-generate \
   --dry-run
 ```
 
-For real model calls, set `OPENROUTER_API_KEY` and omit `--dry-run`:
+For real model calls, set `OPENROUTER_API_KEY` and omit `--dry-run`.
+You may also set `OPENROUTER_MODEL`, or pass `--model` to override both the
+environment variable and the default:
 
 ```bash
 export OPENROUTER_API_KEY="..."
+export OPENROUTER_MODEL="google/gemini-2.5-pro"
 
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
@@ -142,7 +146,8 @@ uv run contract-question-generate \
 
 The default OpenRouter model is configured in
 `src/contract_question_agent/model_client/openrouter.py` and can be overridden
-with `--model`. Tests use fake clients and do not call the network.
+with `OPENROUTER_MODEL` or `--model`. Tests use fake clients and do not call
+the network.
 
 ## Scope and disclaimers
 

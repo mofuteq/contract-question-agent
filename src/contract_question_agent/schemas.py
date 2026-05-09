@@ -79,5 +79,5 @@ class WrittenQuestions(_StrictModel):
 class QuestionModelClient(Protocol):
     model_name: str
 
-    def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
         """Generate one structured output for one CUAD clause span."""
