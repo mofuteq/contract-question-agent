@@ -88,11 +88,13 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
 
     output_path = run_dir / "verification_questions.jsonl"
     metadata_path = run_dir / "run_metadata.json"
+    log_path = run_dir / "run.log"
     rows = [
         VerificationQuestionOutput.model_validate(json.loads(line))
         for line in output_path.read_text(encoding="utf-8").splitlines()
     ]
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    log_text = log_path.read_text(encoding="utf-8")
 
     assert len(rows) == 1
     assert rows[0].contract_id == "C1"
@@ -101,6 +103,7 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
     assert metadata["input_path"] == str(input_path)
     assert metadata["output_path"] == str(output_path)
     assert metadata["metadata_path"] == str(metadata_path)
+    assert metadata["log_path"] == str(log_path)
     assert metadata["clause_type"] == "Non-Compete"
     assert metadata["contract_id"] is None
     assert metadata["limit"] == 1
@@ -109,6 +112,10 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
     assert metadata["dry_run"] is True
     assert metadata["rows_written"] == 1
     assert "T" in metadata["created_at"]
+    assert "run_id=test-run" in log_text
+    assert "rows_written=1" in log_text
+    assert "OPENROUTER_API_KEY" not in log_text
+    assert "Employee will not compete" not in log_text
 
 
 def test_cli_fails_when_run_directory_exists(tmp_path):

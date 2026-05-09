@@ -165,13 +165,16 @@ Inside the run directory:
 ```
 verification_questions.jsonl
 run_metadata.json
+run.log
 ```
 
 `verification_questions.jsonl` contains the structured outputs.
-`run_metadata.json` records the run settings and row count. Use `--output-dir`
-to change the parent directory, and `--run-id` for deterministic or manual run
-names. The command fails if the run directory already exists, so previous runs
-are not silently overwritten.
+`run_metadata.json` records the run settings and row count. `run.log` records
+safe lifecycle events and row counts without logging API keys, clause text, or
+model output. Use `--output-dir` to change the parent directory, `--run-id` for
+deterministic or manual run names, and `--verbose` for DEBUG logs. The command
+fails if the run directory already exists, so previous runs are not silently
+overwritten.
 
 The default OpenRouter model is configured in
 `src/contract_question_agent/model_client/openrouter.py` and can be overridden

@@ -43,6 +43,7 @@ class GenerateQuestionsRequest(_StrictModel):
     input_path: Path
     output_path: Path
     metadata_path: Path
+    log_path: Path
     run_id: str
     created_at: str
     clause_type: str | None = None
@@ -76,6 +77,7 @@ class SafetyCheckedQuestions(_StrictModel):
 class WrittenQuestions(_StrictModel):
     output_path: Path
     metadata_path: Path
+    log_path: Path
     rows_written: int
     outputs: list[VerificationQuestionOutput] = Field(default_factory=list)
 
@@ -86,6 +88,7 @@ class RunMetadata(_StrictModel):
     input_path: Path
     output_path: Path
     metadata_path: Path
+    log_path: Path
     clause_type: str | None
     contract_id: str | None
     limit: NonNegativeInt | None

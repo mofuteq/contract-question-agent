@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Never
 
 from agent_framework import FunctionExecutor, WorkflowBuilder, WorkflowContext
@@ -17,6 +18,8 @@ from contract_question_agent.schemas import (
     WrittenQuestions,
 )
 from contract_question_agent.workflows import nodes
+
+logger = logging.getLogger(__name__)
 
 
 def run_workflow(
@@ -38,27 +41,36 @@ def build_workflow(*, model_client: QuestionModelClient):
         request: GenerateQuestionsRequest,
         ctx: WorkflowContext[LoadedClauseSpans, Never],
     ) -> None:
-        await ctx.send_message(nodes.load_clause_spans_node(request))
+        state = nodes.load_clause_spans_node(request)
+        logger.info("rows_read=%s", len(state.records))
+        await ctx.send_message(state)
 
     async def filter_node_func(
         state: LoadedClauseSpans,
         ctx: WorkflowContext[FilteredClauseSpans, Never],
     ) -> None:
-        await ctx.send_message(nodes.filter_records_node(state))
+        filtered = nodes.filter_records_node(state)
+        logger.info("rows_filtered=%s", len(filtered.records))
+        await ctx.send_message(filtered)
 
     async def generate_node(
         state: FilteredClauseSpans,
         ctx: WorkflowContext[GeneratedQuestions, Never],
     ) -> None:
-        await ctx.send_message(
-            await nodes.generate_minimal_questions_node(state, model_client)
-        )
+        generated = await nodes.generate_minimal_questions_node(state, model_client)
+        logger.info("rows_generated=%s", len(generated.outputs))
+        await ctx.send_message(generated)
 
     async def safety_node(
         state: GeneratedQuestions,
         ctx: WorkflowContext[SafetyCheckedQuestions, Never],
     ) -> None:
-        await ctx.send_message(nodes.safety_check_node(state))
+        checked = nodes.safety_check_node(state)
+        safety_failed_count = sum(
+            1 for output in checked.outputs if output.safety_status == "failed"
+        )
+        logger.info("safety_failed_count=%s", safety_failed_count)
+        await ctx.send_message(checked)
 
     async def write_node(
         state: SafetyCheckedQuestions,

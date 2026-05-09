@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,9 @@ from contract_question_agent.workflows import run_workflow
 DEFAULT_OUTPUT_DIR = Path("data/cuad/runs")
 OUTPUT_FILENAME = "verification_questions.jsonl"
 METADATA_FILENAME = "run_metadata.json"
+LOG_FILENAME = "run.log"
+
+logger = logging.getLogger(__name__)
 
 
 class DryRunQuestionClient:
@@ -88,6 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--model")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
     return parser
 
 
@@ -100,6 +105,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(f"Run directory already exists: {run_dir}")
     output_path = run_dir / OUTPUT_FILENAME
     metadata_path = run_dir / METADATA_FILENAME
+    log_path = run_dir / LOG_FILENAME
     model_name = args.model or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
     if args.dry_run:
         model_client = DryRunQuestionClient(model_name)
@@ -109,10 +115,27 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     run_dir.mkdir(parents=True)
+    configure_logging(log_path, verbose=args.verbose)
+    logger.info("run_id=%s", run_id)
+    logger.info("run_dir=%s", run_dir)
+    logger.info("input_path=%s", args.input)
+    logger.info("output_path=%s", output_path)
+    logger.info("metadata_path=%s", metadata_path)
+    logger.info("log_path=%s", log_path)
+    logger.info("model_name=%s", model_name)
+    logger.info("dry_run=%s", args.dry_run)
+    logger.info(
+        "filters clause_type=%s contract_id=%s limit=%s offset=%s",
+        args.clause_type,
+        args.contract_id,
+        args.limit,
+        args.offset,
+    )
     request = GenerateQuestionsRequest(
         input_path=args.input,
         output_path=output_path,
         metadata_path=metadata_path,
+        log_path=log_path,
         run_id=run_id,
         created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         clause_type=args.clause_type,
@@ -123,11 +146,34 @@ def main(argv: list[str] | None = None) -> None:
         dry_run=args.dry_run,
     )
     result = run_workflow(request, model_client=model_client)
+    logger.info("rows_written=%s", result.rows_written)
     print(f"Wrote {result.rows_written} rows to {result.output_path}")
 
 
 def make_run_id() -> str:
     return datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+
+
+def configure_logging(log_path: Path, *, verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
+    root.setLevel(logging.WARNING)
+    logging.getLogger("contract_question_agent").setLevel(level)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+
+    root.addHandler(console_handler)
+    root.addHandler(file_handler)
 
 
 if __name__ == "__main__":

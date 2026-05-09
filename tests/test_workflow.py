@@ -97,6 +97,7 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
     metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
     _write_spans(
         input_path,
         [
@@ -109,6 +110,7 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
         input_path=input_path,
         output_path=output_path,
         metadata_path=metadata_path,
+        log_path=log_path,
         run_id="workflow-test",
         created_at="2026-05-10T12:00:00+09:00",
         clause_type="Non-Compete",
@@ -138,6 +140,7 @@ def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
     metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
     _write_spans(
         input_path,
         [
@@ -151,6 +154,7 @@ def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
         input_path=input_path,
         output_path=output_path,
         metadata_path=metadata_path,
+        log_path=log_path,
         run_id="workflow-test",
         created_at="2026-05-10T12:00:00+09:00",
         clause_type="Non-Compete",

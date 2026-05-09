@@ -20,6 +20,7 @@ def write_output_node(state: SafetyCheckedQuestions) -> WrittenQuestions:
         input_path=state.request.input_path,
         output_path=state.request.output_path,
         metadata_path=state.request.metadata_path,
+        log_path=state.request.log_path,
         clause_type=state.request.clause_type,
         contract_id=state.request.contract_id,
         limit=state.request.limit,
@@ -32,6 +33,7 @@ def write_output_node(state: SafetyCheckedQuestions) -> WrittenQuestions:
     return WrittenQuestions(
         output_path=state.request.output_path,
         metadata_path=state.request.metadata_path,
+        log_path=state.request.log_path,
         rows_written=len(state.outputs),
         outputs=state.outputs,
     )
