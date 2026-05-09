@@ -19,12 +19,21 @@ Any verification question that future versions generate is a **prompt for
 further investigation** and **must be discussed with a qualified legal
 professional** before being relied upon.
 
-**v0.1 ships the data preparation layer only** — no agent, no LLM
+**v0.1 shipped the data preparation layer only** — no agent, no LLM
 prompts, no question generation, no clause interpretation. This repository
-currently contains a loader for the
+contains a loader for the
 [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad)
 that produces JSONL files filtered to eight clause types relevant to the
 project's first evaluation milestone.
+
+**v0.2 adds a deliberately minimal end-to-end path** from CUAD
+`clause_spans.jsonl` to structured `verification_questions.jsonl`. The v0.2
+workflow is currently implemented with Microsoft Agent Framework, while
+business logic is kept in framework-independent nodes. It uses an
+OpenAI-compatible Agent for OpenRouter generation, deterministic CLI
+filtering, one minimal model call per clause span, Pydantic validation, and a
+rule-based banned-phrase safety check. It is meant to reveal failure patterns,
+not to produce high-quality legal review output.
 
 ## Layout
 
@@ -37,9 +46,19 @@ docs/
 src/contract_question_agent/
   cuad_downloader.py  # optional downloader
   cuad_loader.py      # parser + JSONL writer
+  cli_generate_questions.py
+  model_client/
+  workflows/
+    workflow.py       # Microsoft Agent Framework adapter / graph wiring
+    nodes/            # framework-independent state transitions
 tests/
   test_cuad_downloader.py
   test_cuad_loader.py
+  test_generate_questions_cli.py
+  test_workflow.py
+  test_openrouter_client.py
+  test_safety.py
+  test_schemas.py
 ```
 
 ## Quick start
@@ -65,6 +84,13 @@ uv run cuad-downloader --source huggingface
 uv run cuad-loader \
   --input data/cuad/raw/CUAD_v1.json \
   --output-dir data/cuad/processed
+
+# 3. Run the v0.2 minimal E2E generator without network access.
+uv run contract-question-generate \
+  --input data/cuad/processed/clause_spans.jsonl \
+  --clause-type "Non-Compete" \
+  --limit 3 \
+  --dry-run
 ```
 
 Zenodo is also supported as an alternative source:
@@ -79,6 +105,89 @@ The downloader is optional — if you already have `CUAD_v1.json` (or the
 zip archive) on disk, place it under `data/cuad/raw/` and skip step 1.
 
 See [docs/data.md](docs/data.md) for licensing and attribution requirements.
+
+## v0.2 minimal E2E generation
+
+The generator is intentionally a linear workflow:
+
+```
+LOAD_CLAUSE_SPANS
+-> FILTER_RECORDS
+-> GENERATE_MINIMAL_QUESTIONS
+-> SAFETY_CHECK
+-> WRITE_OUTPUT
+-> DONE
+```
+
+Filtering is deterministic and uses only CLI arguments:
+
+```bash
+uv run contract-question-generate \
+  --input data/cuad/processed/clause_spans.jsonl \
+  --clause-type "Non-Compete" \
+  --contract-id SOME_CONTRACT_ID \
+  --limit 3 \
+  --offset 0 \
+  --dry-run
+```
+
+For real model calls, set `OPENROUTER_API_KEY` and omit `--dry-run`.
+`OPENROUTER_MODEL` is optional; `--model` overrides the environment and default.
+
+Recommended local setup:
+
+```bash
+cp .env.example .env
+# Edit .env and set OPENROUTER_API_KEY.
+# .env is gitignored and must not be committed.
+```
+
+Alternative one-shell setup:
+
+```bash
+export OPENROUTER_API_KEY="..."
+export OPENROUTER_MODEL="google/gemini-3-flash-preview"
+```
+
+Then run:
+
+```bash
+uv run contract-question-generate \
+  --input data/cuad/processed/clause_spans.jsonl \
+  --clause-type "Non-Compete" \
+  --limit 3
+```
+
+Each run creates a fresh directory under `data/cuad/runs/<timestamp>/` by
+default. The timestamp run id uses local time in `YYYYMMDD-HHMMSS` format.
+Inside the run directory:
+
+```
+verification_questions.jsonl
+run_metadata.json
+run.log
+```
+
+`verification_questions.jsonl` contains the structured outputs.
+`run_metadata.json` records the run settings and row-count metrics:
+`rows_read`, `rows_filtered`, `rows_generated`, `safety_failed_count`, and
+`rows_written`. `run.log` records the same safe lifecycle events and row counts
+without logging API keys, clause text, or model output. Use `--output-dir` to
+change the parent directory, `--run-id` for deterministic or manual run names,
+and `--verbose` for DEBUG logs. The command fails if the run directory already
+exists, so previous runs are not silently overwritten.
+
+The default OpenRouter model is configured in
+`src/contract_question_agent/model_client/openrouter.py` and can be overridden
+with `OPENROUTER_MODEL` or `--model`. `OPENROUTER_API_KEY` is required for real
+model calls; `OPENROUTER_MODEL` is optional. Tests use fake clients and do not
+call the network.
+
+The workflow calls `model_client.generate()` once per filtered clause span. If
+`--limit 1` produces one output row but OpenRouter or provider logs show two
+upstream requests, the duplicate request is likely inside the Microsoft Agent
+Framework Agent structured-output path or provider-side handling, not the v0.2
+workflow wiring.
 
 ## Scope and disclaimers
 

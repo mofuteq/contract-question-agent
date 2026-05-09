@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from contract_question_agent.schemas import (
+    LegalReviewQuestion,
+    VerificationQuestion,
+    VerificationQuestionOutput,
+)
+
+
+def test_verification_question_output_validates_minimal_shape():
+    output = VerificationQuestionOutput(
+        contract_id="C1",
+        clause_type="Non-Compete",
+        evidence_text="Employee will not compete for one year.",
+        unknowns=["Scope of restricted business is unclear."],
+        decision_risks=["May affect post-contract options."],
+        legal_review_questions=[
+            LegalReviewQuestion(question="What law applies?", reason="Law affects review.")
+        ],
+        verification_questions=[
+            VerificationQuestion(
+                question="Which activities are covered?",
+                why_it_matters="The scope affects practical impact.",
+            )
+        ],
+        suggested_next_step="Discuss with a qualified professional.",
+        safety_disclaimer="disclaimer",
+        safety_status="passed",
+        safety_warnings=[],
+        model_name="fake-model",
+    )
+
+    assert output.contract_id == "C1"
+
+
+def test_verification_question_output_rejects_extra_fields():
+    with pytest.raises(ValidationError):
+        VerificationQuestionOutput(
+            contract_id="C1",
+            clause_type="Non-Compete",
+            evidence_text="text",
+            unknowns=[],
+            decision_risks=[],
+            legal_review_questions=[],
+            verification_questions=[],
+            suggested_next_step="next",
+            safety_disclaimer="disclaimer",
+            safety_status="passed",
+            safety_warnings=[],
+            model_name="fake-model",
+            behavioral_lenses=[],
+        )
