@@ -21,6 +21,11 @@ def _output(text: str) -> VerificationQuestionOutput:
     )
 
 
+def _output_with_evidence(evidence_text: str) -> VerificationQuestionOutput:
+    output = _output("Ask what this clause means in context.")
+    return output.model_copy(update={"evidence_text": evidence_text})
+
+
 def test_safety_check_passes_when_no_banned_phrase():
     checked = apply_safety_check(_output("Ask what this clause means in context."))
 
@@ -37,3 +42,10 @@ def test_safety_check_flags_banned_phrase_case_insensitively():
         "banned phrase found: this clause is enforceable"
     ]
     assert checked.safety_disclaimer == SAFETY_DISCLAIMER
+
+
+def test_safety_check_excludes_evidence_text():
+    checked = apply_safety_check(_output_with_evidence("This clause is enforceable."))
+
+    assert checked.safety_status == "passed"
+    assert checked.safety_warnings == []

@@ -149,6 +149,12 @@ The default OpenRouter model is configured in
 with `OPENROUTER_MODEL` or `--model`. Tests use fake clients and do not call
 the network.
 
+The workflow calls `OpenRouterQuestionClient.generate()` once per filtered
+clause span. If `--limit 1` produces one output row but OpenRouter or provider
+logs show two upstream requests, the duplicate request is likely inside the
+Microsoft Agent Framework Agent structured-output path or provider-side
+handling, not the v0.2 workflow wiring.
+
 You can also put the same values in a local `.env` file:
 
 ```env

@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Never
-
-from agent_framework import WorkflowContext
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import apply_safety_check
@@ -21,18 +18,12 @@ from contract_question_agent.schemas import (
 )
 
 
-async def load_clause_spans(
-    request: GenerateQuestionsRequest,
-    ctx: WorkflowContext[LoadedClauseSpans, Never],
-) -> None:
+def load_clause_spans(request: GenerateQuestionsRequest) -> LoadedClauseSpans:
     records = read_clause_spans_jsonl(request.input_path)
-    await ctx.send_message(LoadedClauseSpans(request=request, records=records))
+    return LoadedClauseSpans(request=request, records=records)
 
 
-async def filter_records(
-    state: LoadedClauseSpans,
-    ctx: WorkflowContext[FilteredClauseSpans, Never],
-) -> None:
+def filter_records(state: LoadedClauseSpans) -> FilteredClauseSpans:
     records = filter_clause_spans(
         state.records,
         clause_type=state.request.clause_type,
@@ -40,45 +31,33 @@ async def filter_records(
         limit=state.request.limit,
         offset=state.request.offset,
     )
-    await ctx.send_message(FilteredClauseSpans(request=state.request, records=records))
+    return FilteredClauseSpans(request=state.request, records=records)
 
 
 async def generate_minimal_questions(
     state: FilteredClauseSpans,
-    ctx: WorkflowContext[GeneratedQuestions, Never],
     model_client: QuestionModelClient,
-) -> None:
+) -> GeneratedQuestions:
     outputs = [await model_client.generate(record) for record in state.records]
-    await ctx.send_message(GeneratedQuestions(request=state.request, outputs=outputs))
+    return GeneratedQuestions(request=state.request, outputs=outputs)
 
 
-async def safety_check(
-    state: GeneratedQuestions,
-    ctx: WorkflowContext[SafetyCheckedQuestions, Never],
-) -> None:
+def safety_check(state: GeneratedQuestions) -> SafetyCheckedQuestions:
     outputs = [apply_safety_check(output) for output in state.outputs]
-    await ctx.send_message(SafetyCheckedQuestions(request=state.request, outputs=outputs))
+    return SafetyCheckedQuestions(request=state.request, outputs=outputs)
 
 
-async def write_output(
-    state: SafetyCheckedQuestions,
-    ctx: WorkflowContext[WrittenQuestions, Never],
-) -> None:
+def write_output(state: SafetyCheckedQuestions) -> WrittenQuestions:
     write_verification_questions_jsonl(state.request.output_path, state.outputs)
-    await ctx.send_message(
-        WrittenQuestions(
-            output_path=state.request.output_path,
-            rows_written=len(state.outputs),
-            outputs=state.outputs,
-        )
+    return WrittenQuestions(
+        output_path=state.request.output_path,
+        rows_written=len(state.outputs),
+        outputs=state.outputs,
     )
 
 
-async def done(
-    state: WrittenQuestions,
-    ctx: WorkflowContext[Never, WrittenQuestions],
-) -> None:
-    await ctx.yield_output(state)
+def done(state: WrittenQuestions) -> WrittenQuestions:
+    return state
 
 
 def read_clause_spans_jsonl(path: Path) -> list[ClauseSpanRecord]:

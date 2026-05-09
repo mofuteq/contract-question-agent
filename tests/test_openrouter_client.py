@@ -59,6 +59,7 @@ def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
     output = asyncio.run(client.generate(_span()))
 
     assert output.model_name == "test-model"
+    assert client.call_count == 1
     assert output.safety_disclaimer
     assert agent.calls[0][1] == {"response_format": VerificationQuestionOutput}
     assert json.loads(agent.calls[0][0]) == {

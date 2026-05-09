@@ -11,7 +11,9 @@ from contract_question_agent.schemas import (
     FilteredClauseSpans,
     GenerateQuestionsRequest,
     GeneratedQuestions,
+    LoadedClauseSpans,
     QuestionModelClient,
+    SafetyCheckedQuestions,
     WrittenQuestions,
 )
 from contract_question_agent.workflows import nodes
@@ -32,18 +34,48 @@ def run_linear_workflow(
 
 
 def build_linear_workflow(*, model_client: QuestionModelClient):
+    async def load_node(
+        request: GenerateQuestionsRequest,
+        ctx: WorkflowContext[LoadedClauseSpans, Never],
+    ) -> None:
+        await ctx.send_message(nodes.load_clause_spans(request))
+
+    async def filter_node_func(
+        state: LoadedClauseSpans,
+        ctx: WorkflowContext[FilteredClauseSpans, Never],
+    ) -> None:
+        await ctx.send_message(nodes.filter_records(state))
+
     async def generate_node(
         state: FilteredClauseSpans,
         ctx: WorkflowContext[GeneratedQuestions, Never],
     ) -> None:
-        await nodes.generate_minimal_questions(state, ctx, model_client)
+        await ctx.send_message(await nodes.generate_minimal_questions(state, model_client))
 
-    load = FunctionExecutor(nodes.load_clause_spans, id="LOAD_CLAUSE_SPANS")
-    filter_node = FunctionExecutor(nodes.filter_records, id="FILTER_RECORDS")
+    async def safety_node(
+        state: GeneratedQuestions,
+        ctx: WorkflowContext[SafetyCheckedQuestions, Never],
+    ) -> None:
+        await ctx.send_message(nodes.safety_check(state))
+
+    async def write_node(
+        state: SafetyCheckedQuestions,
+        ctx: WorkflowContext[WrittenQuestions, Never],
+    ) -> None:
+        await ctx.send_message(nodes.write_output(state))
+
+    async def done_node(
+        state: WrittenQuestions,
+        ctx: WorkflowContext[Never, WrittenQuestions],
+    ) -> None:
+        await ctx.yield_output(nodes.done(state))
+
+    load = FunctionExecutor(load_node, id="LOAD_CLAUSE_SPANS")
+    filter_node = FunctionExecutor(filter_node_func, id="FILTER_RECORDS")
     generate = FunctionExecutor(generate_node, id="GENERATE_MINIMAL_QUESTIONS")
-    safety = FunctionExecutor(nodes.safety_check, id="SAFETY_CHECK")
-    write = FunctionExecutor(nodes.write_output, id="WRITE_OUTPUT")
-    done = FunctionExecutor(nodes.done, id="DONE")
+    safety = FunctionExecutor(safety_node, id="SAFETY_CHECK")
+    write = FunctionExecutor(write_node, id="WRITE_OUTPUT")
+    done = FunctionExecutor(done_node, id="DONE")
 
     return (
         WorkflowBuilder(

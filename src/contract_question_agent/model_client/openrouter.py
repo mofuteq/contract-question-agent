@@ -44,6 +44,7 @@ class OpenRouterQuestionClient:
         load_dotenv(dotenv_path=Path.cwd() / ".env")
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name
+        self.call_count = 0
         if not self.api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY is required unless --dry-run is set."
@@ -59,6 +60,7 @@ class OpenRouterQuestionClient:
         )
 
     async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+        self.call_count += 1
         response = await self.agent.run(
             json.dumps(
                 {

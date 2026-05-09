@@ -32,7 +32,7 @@ def find_banned_phrases(value: Any) -> list[str]:
 
 def apply_safety_check(output: VerificationQuestionOutput) -> VerificationQuestionOutput:
     """Annotate a structured output with deterministic safety status."""
-    payload = output.model_dump()
+    payload = output.model_dump(exclude={"evidence_text"})
     found = find_banned_phrases(payload)
     warnings = [f"banned phrase found: {phrase}" for phrase in found]
     return output.model_copy(

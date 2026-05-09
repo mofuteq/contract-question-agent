@@ -18,7 +18,11 @@ from contract_question_agent.workflows.nodes import filter_clause_spans
 class FakeQuestionClient:
     model_name = "fake-model"
 
+    def __init__(self) -> None:
+        self.call_count = 0
+
     async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+        self.call_count += 1
         return VerificationQuestionOutput(
             contract_id=record.contract_id,
             clause_type=record.clause_type,
@@ -110,9 +114,11 @@ def test_workflow_e2e_writes_valid_jsonl_with_fake_model(tmp_path):
         dry_run=True,
     )
 
-    result = run_linear_workflow(request, model_client=FakeQuestionClient())
+    fake_client = FakeQuestionClient()
+    result = run_linear_workflow(request, model_client=fake_client)
 
     assert result.rows_written == 1
+    assert fake_client.call_count == 1
     rows = [
         VerificationQuestionOutput.model_validate(json.loads(line))
         for line in output_path.read_text(encoding="utf-8").splitlines()
