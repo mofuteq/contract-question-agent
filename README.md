@@ -134,16 +134,26 @@ uv run contract-question-generate \
 ```
 
 For real model calls, set `OPENROUTER_API_KEY` and omit `--dry-run`.
-You may also set `OPENROUTER_MODEL`, or pass `--model` to override both the
-environment variable and the default:
+`OPENROUTER_MODEL` is optional; `--model` overrides the environment and default.
+
+Recommended local setup:
 
 ```bash
 cp .env.example .env
-# Edit .env with your OpenRouter key. .env is gitignored and must not be committed.
+# Edit .env and set OPENROUTER_API_KEY.
+# .env is gitignored and must not be committed.
+```
 
+Alternative one-shell setup:
+
+```bash
 export OPENROUTER_API_KEY="..."
 export OPENROUTER_MODEL="google/gemini-3-flash-preview"
+```
 
+Then run:
+
+```bash
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
   --output data/cuad/processed/verification_questions.jsonl \
@@ -162,13 +172,6 @@ The workflow calls `model_client.generate()` once per filtered clause span. If
 upstream requests, the duplicate request is likely inside the Microsoft Agent
 Framework Agent structured-output path or provider-side handling, not the v0.2
 workflow wiring.
-
-You can also put the same values in a local `.env` file:
-
-```env
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=google/gemini-3-flash-preview
-```
 
 ## Scope and disclaimers
 
