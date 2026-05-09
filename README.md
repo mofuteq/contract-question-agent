@@ -88,7 +88,6 @@ uv run cuad-loader \
 # 3. Run the v0.2 poor E2E generator without network access.
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
-  --output data/cuad/processed/verification_questions.jsonl \
   --clause-type "Non-Compete" \
   --limit 3 \
   --dry-run
@@ -125,7 +124,6 @@ Filtering is deterministic and uses only CLI arguments:
 ```bash
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
-  --output data/cuad/processed/verification_questions.jsonl \
   --clause-type "Non-Compete" \
   --contract-id SOME_CONTRACT_ID \
   --limit 3 \
@@ -156,10 +154,24 @@ Then run:
 ```bash
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
-  --output data/cuad/processed/verification_questions.jsonl \
   --clause-type "Non-Compete" \
   --limit 3
 ```
+
+Each run creates a fresh directory under `data/cuad/runs/<timestamp>/` by
+default. The timestamp run id uses local time in `YYYYMMDD-HHMMSS` format.
+Inside the run directory:
+
+```
+verification_questions.jsonl
+run_metadata.json
+```
+
+`verification_questions.jsonl` contains the structured outputs.
+`run_metadata.json` records the run settings and row count. Use `--output-dir`
+to change the parent directory, and `--run-id` for deterministic or manual run
+names. The command fails if the run directory already exists, so previous runs
+are not silently overwritten.
 
 The default OpenRouter model is configured in
 `src/contract_question_agent/model_client/openrouter.py` and can be overridden

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,6 +22,11 @@ from contract_question_agent.schemas import (
     VerificationQuestionOutput,
 )
 from contract_question_agent.workflows import run_workflow
+
+
+DEFAULT_OUTPUT_DIR = Path("data/cuad/runs")
+OUTPUT_FILENAME = "verification_questions.jsonl"
+METADATA_FILENAME = "run_metadata.json"
 
 
 class DryRunQuestionClient:
@@ -74,7 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Generate v0.2 verification questions from CUAD clause spans."
     )
     parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--run-id")
     parser.add_argument("--clause-type")
     parser.add_argument("--contract-id")
     parser.add_argument("--limit", type=int)
@@ -87,25 +94,40 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     args = build_parser().parse_args(argv)
+    run_id = args.run_id or make_run_id()
+    run_dir = args.output_dir / run_id
+    if run_dir.exists():
+        raise SystemExit(f"Run directory already exists: {run_dir}")
+    output_path = run_dir / OUTPUT_FILENAME
+    metadata_path = run_dir / METADATA_FILENAME
+    model_name = args.model or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+    if args.dry_run:
+        model_client = DryRunQuestionClient(model_name)
+    else:
+        try:
+            model_client = OpenRouterQuestionClient(model_name=model_name)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+    run_dir.mkdir(parents=True)
     request = GenerateQuestionsRequest(
         input_path=args.input,
-        output_path=args.output,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        run_id=run_id,
+        created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         clause_type=args.clause_type,
         contract_id=args.contract_id,
         limit=args.limit,
         offset=args.offset,
-        model_name=args.model or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL,
+        model_name=model_name,
         dry_run=args.dry_run,
     )
-    if args.dry_run:
-        model_client = DryRunQuestionClient(request.model_name)
-    else:
-        try:
-            model_client = OpenRouterQuestionClient(model_name=request.model_name)
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from exc
     result = run_workflow(request, model_client=model_client)
     print(f"Wrote {result.rows_written} rows to {result.output_path}")
+
+
+def make_run_id() -> str:
+    return datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
 
 
 if __name__ == "__main__":

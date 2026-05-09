@@ -96,6 +96,7 @@ def test_filter_records_is_deterministic_for_cli_args():
 def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
     _write_spans(
         input_path,
         [
@@ -107,6 +108,9 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
     request = GenerateQuestionsRequest(
         input_path=input_path,
         output_path=output_path,
+        metadata_path=metadata_path,
+        run_id="workflow-test",
+        created_at="2026-05-10T12:00:00+09:00",
         clause_type="Non-Compete",
         limit=1,
         offset=1,
@@ -118,6 +122,7 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
     result = run_workflow(request, model_client=fake_client)
 
     assert result.rows_written == 1
+    assert result.metadata_path == metadata_path
     assert fake_client.call_count == 1
     rows = [
         VerificationQuestionOutput.model_validate(json.loads(line))
@@ -132,6 +137,7 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
 def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
     _write_spans(
         input_path,
         [
@@ -144,6 +150,9 @@ def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
     request = GenerateQuestionsRequest(
         input_path=input_path,
         output_path=output_path,
+        metadata_path=metadata_path,
+        run_id="workflow-test",
+        created_at="2026-05-10T12:00:00+09:00",
         clause_type="Non-Compete",
         limit=3,
         model_name="fake-model",

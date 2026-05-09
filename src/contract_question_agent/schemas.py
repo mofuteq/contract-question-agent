@@ -42,6 +42,9 @@ class VerificationQuestionOutput(_StrictModel):
 class GenerateQuestionsRequest(_StrictModel):
     input_path: Path
     output_path: Path
+    metadata_path: Path
+    run_id: str
+    created_at: str
     clause_type: str | None = None
     contract_id: str | None = None
     limit: NonNegativeInt | None = None
@@ -72,8 +75,24 @@ class SafetyCheckedQuestions(_StrictModel):
 
 class WrittenQuestions(_StrictModel):
     output_path: Path
+    metadata_path: Path
     rows_written: int
     outputs: list[VerificationQuestionOutput] = Field(default_factory=list)
+
+
+class RunMetadata(_StrictModel):
+    run_id: str
+    created_at: str
+    input_path: Path
+    output_path: Path
+    metadata_path: Path
+    clause_type: str | None
+    contract_id: str | None
+    limit: NonNegativeInt | None
+    offset: NonNegativeInt
+    model_name: str
+    dry_run: bool
+    rows_written: NonNegativeInt
 
 
 class QuestionModelClient(Protocol):

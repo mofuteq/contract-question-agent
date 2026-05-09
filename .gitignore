@@ -18,3 +18,4 @@ data/cuad/raw/*
 !data/cuad/raw/.gitkeep
 data/cuad/processed/*
 !data/cuad/processed/.gitkeep
+data/cuad/runs/
