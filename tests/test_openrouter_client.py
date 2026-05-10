@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
-from contract_question_agent.model_client.openrouter import OpenRouterQuestionClient
+from contract_question_agent.model_client import openrouter
+from contract_question_agent.model_client.openrouter import (
+    OpenRouterQuestionClient,
+    extract_usage_details,
+)
 from contract_question_agent.schemas import VerificationQuestionOutput
 
 
@@ -116,3 +121,118 @@ def test_openrouter_client_reads_model_from_environment(monkeypatch):
     client = OpenRouterQuestionClient(agent=agent)
 
     assert client.model_name == "env-model"
+
+
+def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch):
+    response = SimpleNamespace(
+        value=_output(),
+        text="",
+        usage=SimpleNamespace(
+            prompt_tokens=11,
+            completion_tokens=7,
+            total_tokens=18,
+        ),
+    )
+    agent = FakeAgent(response)
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+    span_events: list[dict] = []
+    generation_updates: list[dict] = []
+
+    @contextmanager
+    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+        span_events.append(
+            {
+                "name": name,
+                "input": input,
+                "metadata": metadata,
+                "as_type": as_type,
+            }
+        )
+        yield
+
+    monkeypatch.setattr(openrouter.tracing, "span", fake_span)
+    monkeypatch.setattr(
+        openrouter.tracing,
+        "update_current_generation",
+        lambda **kwargs: generation_updates.append(kwargs),
+    )
+
+    output = asyncio.run(client.generate(_span()))
+
+    assert output.contract_id == "C1"
+    assert span_events == [
+        {
+            "name": "openrouter-verification-question-agent",
+            "input": {
+                "contract_id": "C1",
+                "clause_type": "Non-Compete",
+                "evidence_char_count": 26,
+            },
+            "metadata": {
+                "contract_id": "C1",
+                "clause_type": "Non-Compete",
+                "provider": "openrouter",
+                "runtime": "microsoft-agent-framework",
+            },
+            "as_type": "generation",
+        }
+    ]
+    assert generation_updates == [
+        {
+            "model": "test-model",
+            "output": {
+                "contract_id": "C1",
+                "clause_type": "Non-Compete",
+                "unknown_count": 0,
+                "decision_risk_count": 0,
+                "legal_review_question_count": 0,
+                "verification_question_count": 0,
+                "safety_status": "unchecked",
+                "model_name": "test-model",
+            },
+            "usage_details": {"input": 11, "output": 7, "total": 18},
+        }
+    ]
+    trace_payload = json.dumps({"spans": span_events, "updates": generation_updates})
+    assert "Employee will not compete" not in trace_payload
+    assert "evidence_text" not in trace_payload
+
+
+def test_extract_usage_details_maps_openai_style_usage():
+    response = SimpleNamespace(
+        usage=SimpleNamespace(
+            prompt_tokens=12,
+            completion_tokens=8,
+            total_tokens=20,
+        )
+    )
+
+    assert extract_usage_details(response) == {
+        "input": 12,
+        "output": 8,
+        "total": 20,
+    }
+
+
+def test_extract_usage_details_maps_maf_style_usage():
+    response = SimpleNamespace(
+        metadata={
+            "inputUsage": 13,
+            "outputUsage": 9,
+            "totalUsage": 22,
+        }
+    )
+
+    assert extract_usage_details(response) == {
+        "input": 13,
+        "output": 9,
+        "total": 22,
+    }
+
+
+def test_extract_usage_details_returns_none_when_usage_missing():
+    assert extract_usage_details(SimpleNamespace(value=_output(), text="")) is None
