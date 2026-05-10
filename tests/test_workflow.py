@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,9 +12,11 @@ from contract_question_agent.schemas import (
     LegalReviewQuestion,
     VerificationQuestion,
     VerificationQuestionOutput,
+    WrittenQuestions,
 )
+from contract_question_agent.workflows import workflow
 from contract_question_agent.workflows import tracing
-from contract_question_agent.workflows import run_workflow
+from contract_question_agent.workflows import run_workflow, run_workflow_async
 from contract_question_agent.workflows.nodes.filter_records import filter_clause_spans
 
 
@@ -308,3 +311,57 @@ def test_langfuse_session_id_is_ascii_and_under_limit():
     assert tracing.normalize_session_id("実行-123") == "-123"
     assert tracing.normalize_session_id("x" * 250) == "x" * 200
     assert tracing.normalize_session_id("実行") == "contract-question-agent-run"
+
+
+def test_run_workflow_passes_configurable_run_context_to_langgraph(
+    tmp_path,
+    monkeypatch,
+):
+    request = GenerateQuestionsRequest(
+        input_path=tmp_path / "clause_spans.jsonl",
+        output_path=tmp_path / "verification_questions.jsonl",
+        metadata_path=tmp_path / "run_metadata.json",
+        log_path=tmp_path / "run.log",
+        run_id="workflow-config-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        model_name="fake-model",
+        dry_run=True,
+    )
+    written = WrittenQuestions(
+        output_path=request.output_path,
+        metadata_path=request.metadata_path,
+        log_path=request.log_path,
+        rows_read=0,
+        rows_filtered=0,
+        rows_generated=0,
+        safety_failed_count=0,
+        rows_written=0,
+    )
+    calls: list[dict] = []
+
+    class FakeGraph:
+        async def ainvoke(self, state, *, config=None):
+            calls.append({"state": state, "config": config})
+            return {"value": written}
+
+    monkeypatch.setattr(workflow, "build_workflow", lambda *, model_client: FakeGraph())
+
+    result = asyncio.run(
+        run_workflow_async(request, model_client=FakeQuestionClient())
+    )
+
+    assert result == written
+    assert calls == [
+        {
+            "state": {"value": request},
+            "config": {
+                "configurable": {
+                    "thread_id": "workflow-config-test",
+                    "run_id": "workflow-config-test",
+                    "session_id": "workflow-config-test",
+                    "model_name": "fake-model",
+                    "dry_run": True,
+                }
+            },
+        }
+    ]

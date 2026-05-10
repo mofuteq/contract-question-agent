@@ -86,7 +86,10 @@ async def run_workflow_async(
                 "dry_run": request.dry_run,
             },
         ):
-            result = await graph.ainvoke({"value": request})
+            result = await graph.ainvoke(
+                {"value": request},
+                config=_graph_config(request, session_id=session_id),
+            )
             output = result["value"]
             if not isinstance(output, WrittenQuestions):
                 raise RuntimeError("LangGraph workflow did not produce a WrittenQuestions output.")
@@ -188,6 +191,22 @@ def _request_summary(request: GenerateQuestionsRequest) -> dict[str, object]:
         "offset": request.offset,
         "model_name": request.model_name,
         "dry_run": request.dry_run,
+    }
+
+
+def _graph_config(
+    request: GenerateQuestionsRequest,
+    *,
+    session_id: str,
+) -> dict[str, dict[str, object]]:
+    return {
+        "configurable": {
+            "thread_id": session_id,
+            "run_id": request.run_id,
+            "session_id": session_id,
+            "model_name": request.model_name,
+            "dry_run": request.dry_run,
+        }
     }
 
 
