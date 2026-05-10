@@ -143,6 +143,16 @@ def normalize_session_id(value: str) -> str:
     return normalized[:200]
 
 
+def is_langgraph_callback_enabled() -> bool:
+    """Return True when LangGraph callback mode should own workflow tracing."""
+    return is_enabled() and os.getenv(LANGGRAPH_CALLBACK_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def get_langgraph_callbacks(
     *,
     session_id: str,
@@ -150,14 +160,7 @@ def get_langgraph_callbacks(
     tags: list[str] | None = None,
 ) -> list[Any]:
     """Return optional Langfuse LangGraph callbacks for graph visualization."""
-    if os.getenv(LANGGRAPH_CALLBACK_ENV, "true").strip().lower() in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }:
-        return []
-    if not is_enabled():
+    if not is_langgraph_callback_enabled():
         return []
     try:
         from langfuse.langchain import CallbackHandler  # type: ignore[import-not-found]
@@ -190,6 +193,10 @@ def state_transition(
     next_node: str | None = None,
 ) -> Any:
     """Trace one business-node state transition in the LangGraph workflow."""
+    if is_langgraph_callback_enabled():
+        yield _noop_record_output
+        return
+
     transition = {
         "node": node_name,
         "input_state": _state_name(input_state),
@@ -207,6 +214,10 @@ def state_transition(
             )
 
         yield _record_output
+
+
+def _noop_record_output(output_state: Any) -> None:
+    return None
 
 
 def summarize_state(state: Any) -> dict[str, Any]:
@@ -303,6 +314,7 @@ __all__ = [
     "get_client",
     "get_langgraph_callbacks",
     "is_enabled",
+    "is_langgraph_callback_enabled",
     "observe",
     "normalize_session_id",
     "session",

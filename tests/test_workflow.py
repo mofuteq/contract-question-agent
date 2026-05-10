@@ -329,8 +329,21 @@ def test_langgraph_callbacks_can_be_disabled_with_env_flag(monkeypatch):
     )
 
 
-def test_langgraph_callbacks_are_disabled_without_langfuse_credentials(monkeypatch):
+def test_langgraph_callbacks_are_disabled_by_default(monkeypatch):
     monkeypatch.delenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", raising=False)
+    monkeypatch.setattr(tracing, "_ENABLED", True)
+
+    assert (
+        tracing.get_langgraph_callbacks(
+            session_id="run-123",
+            trace_name="contract-question-agent-v0.3",
+        )
+        == []
+    )
+
+
+def test_langgraph_callbacks_are_disabled_without_langfuse_credentials(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.setattr(tracing, "_ENABLED", None)
@@ -359,7 +372,7 @@ def test_langgraph_callbacks_use_current_trace_context(monkeypatch):
     langfuse_langchain_module = ModuleType("langfuse.langchain")
     langfuse_langchain_module.CallbackHandler = FakeCallbackHandler
 
-    monkeypatch.delenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", raising=False)
+    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
     monkeypatch.setattr(tracing, "_ENABLED", True)
     monkeypatch.setattr(tracing, "get_client", lambda: FakeClient())
     monkeypatch.setitem(sys.modules, "langfuse", langfuse_module)
@@ -463,13 +476,20 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
     )
     callback = object()
     calls: list[dict] = []
+    span_events: list[dict] = []
 
     class FakeGraph:
         async def ainvoke(self, state, *, config=None):
             calls.append({"state": state, "config": config})
             return {"value": written}
 
+    @contextmanager
+    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+        span_events.append({"name": name, "input": input, "metadata": metadata})
+        yield
+
     monkeypatch.setattr(workflow, "build_workflow", lambda *, model_client: FakeGraph())
+    monkeypatch.setattr(tracing, "span", fake_span)
     monkeypatch.setattr(
         tracing,
         "get_langgraph_callbacks",
@@ -481,6 +501,7 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
     )
 
     assert result == written
+    assert span_events == []
     assert calls[0]["config"] == {
         "configurable": {
             "thread_id": "workflow-callback-test",
@@ -498,3 +519,25 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
         "tags": ["contract-question-agent", "v0.3"],
         "callbacks": [callback],
     }
+
+
+def test_state_transition_is_noop_in_callback_mode(monkeypatch):
+    span_events: list[str] = []
+
+    @contextmanager
+    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+        span_events.append(name)
+        yield
+
+    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
+    monkeypatch.setattr(tracing, "_ENABLED", True)
+    monkeypatch.setattr(tracing, "span", fake_span)
+
+    with tracing.state_transition(
+        "LOAD_CLAUSE_SPANS",
+        input_state=object(),
+        next_node="FILTER_RECORDS",
+    ) as record_output:
+        record_output(object())
+
+    assert span_events == []

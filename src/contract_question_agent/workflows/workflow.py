@@ -79,20 +79,12 @@ async def run_workflow_async(
         trace_name=trace_name,
         tags=trace_tags,
     ):
-        with tracing.span(
-            trace_name,
-            input=_request_summary(request),
-            metadata={
-                "run_id": request.run_id,
-                "session_id": session_id,
-                "dry_run": request.dry_run,
-            },
-        ):
-            langgraph_callbacks = tracing.get_langgraph_callbacks(
-                session_id=session_id,
-                trace_name=trace_name,
-                tags=trace_tags,
-            )
+        langgraph_callbacks = tracing.get_langgraph_callbacks(
+            session_id=session_id,
+            trace_name=trace_name,
+            tags=trace_tags,
+        )
+        if langgraph_callbacks:
             result = await graph.ainvoke(
                 {"value": request},
                 config=_graph_config(
@@ -103,9 +95,29 @@ async def run_workflow_async(
                     callbacks=langgraph_callbacks,
                 ),
             )
-            output = result["value"]
-            if not isinstance(output, WrittenQuestions):
-                raise RuntimeError("LangGraph workflow did not produce a WrittenQuestions output.")
+            output = _validate_workflow_output(result)
+            tracing.flush()
+            return output
+
+        with tracing.span(
+            trace_name,
+            input=_request_summary(request),
+            metadata={
+                "run_id": request.run_id,
+                "session_id": session_id,
+                "dry_run": request.dry_run,
+            },
+        ):
+            result = await graph.ainvoke(
+                {"value": request},
+                config=_graph_config(
+                    request,
+                    session_id=session_id,
+                    trace_name=trace_name,
+                    tags=trace_tags,
+                ),
+            )
+            output = _validate_workflow_output(result)
             tracing.update_current_span(output=_written_summary(output))
             tracing.flush()
             return output
@@ -193,6 +205,13 @@ def build_workflow(*, model_client: QuestionModelClient):
     return graph.compile()
 
 
+def _validate_workflow_output(result: WorkflowGraphState) -> WrittenQuestions:
+    output = result["value"]
+    if not isinstance(output, WrittenQuestions):
+        raise RuntimeError("LangGraph workflow did not produce a WrittenQuestions output.")
+    return output
+
+
 def _request_summary(request: GenerateQuestionsRequest) -> dict[str, object]:
     return {
         "run_id": request.run_id,
@@ -234,9 +253,8 @@ def _graph_config(
     }
     if callbacks:
         # Manual spans remain the canonical business trace. The LangGraph
-        # callback may add framework-level observations; it is enabled by
-        # default for Langfuse Agent Graph visualization and can be disabled
-        # with LANGFUSE_LANGGRAPH_CALLBACK_ENABLED=false.
+        # callback owns workflow-level tracing only in explicit callback mode
+        # so Langfuse can render the Agent Graph without duplicate trees.
         config["callbacks"] = callbacks
     return config
 
