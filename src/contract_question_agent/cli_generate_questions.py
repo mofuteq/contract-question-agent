@@ -178,6 +178,7 @@ def _run_generator(
 ):
     tracing.update_current_trace(
         name="contract-question-generate",
+        session_id=request.run_id,
         metadata=trace_metadata,
         tags=["contract-question-agent", "v0.3"],
     )

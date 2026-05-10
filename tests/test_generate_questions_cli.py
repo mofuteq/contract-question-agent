@@ -299,6 +299,8 @@ def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
     assert metadata["langfuse_trace_id"] == "trace-123"
     assert metadata["langfuse_trace_url"] == "https://langfuse.test/trace-123"
     assert metadata["langfuse_environment"] == "test"
+    assert fake_client.trace_metadata["session_id"] == "test-run"
+    assert fake_client.trace_metadata["metadata"]["run_id"] == "test-run"
     updated_metadata = {
         event[1]: event[2] for event in fake_client.events if event[0] == "update"
     }
