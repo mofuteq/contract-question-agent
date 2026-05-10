@@ -272,7 +272,7 @@ def test_cli_noops_tracing_when_langfuse_client_unavailable(tmp_path, monkeypatc
     assert "tracing_enabled=False" in log_text
 
 
-def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
+def test_cli_records_fake_langfuse_root_trace_metadata(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
@@ -293,14 +293,7 @@ def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
     run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
 
     span_names = [event[1] for event in fake_client.events if event[0] == "enter"]
-    assert span_names == [
-        "contract-question-generate",
-        "LOAD_CLAUSE_SPANS",
-        "FILTER_RECORDS",
-        "GENERATE_MINIMAL_QUESTIONS",
-        "SAFETY_CHECK",
-        "WRITE_OUTPUT",
-    ]
+    assert span_names == ["contract-question-generate"]
     metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
     assert metadata["tracing_enabled"] is True
     assert metadata["langfuse_trace_id"] == "trace-123"
@@ -320,30 +313,7 @@ def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
         "verification_questions",
     }
     assert forbidden_metadata_keys.isdisjoint(fake_client.trace_metadata["metadata"])
-    updated_metadata = {
-        event[1]: event[2] for event in fake_client.events if event[0] == "update"
-    }
-    assert updated_metadata["LOAD_CLAUSE_SPANS"] == {"rows_read": 1}
-    assert updated_metadata["FILTER_RECORDS"] == {
-        "rows_read": 1,
-        "rows_filtered": 1,
-    }
-    assert updated_metadata["GENERATE_MINIMAL_QUESTIONS"] == {
-        "rows_filtered": 1,
-        "rows_generated": 1,
-        "model_name": DEFAULT_OPENROUTER_MODEL,
-        "dry_run": True,
-    }
-    assert updated_metadata["SAFETY_CHECK"] == {
-        "rows_generated": 1,
-        "safety_failed_count": 0,
-    }
-    assert updated_metadata["WRITE_OUTPUT"] == {
-        "rows_written": 1,
-        "output_path": str(run_dir / "verification_questions.jsonl"),
-        "metadata_path": str(run_dir / "run_metadata.json"),
-        "log_path": str(run_dir / "run.log"),
-    }
+    assert not [event for event in fake_client.events if event[0] == "update"]
     assert fake_client.flushed is True
 
 

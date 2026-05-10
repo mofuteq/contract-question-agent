@@ -259,7 +259,7 @@ to sign or not sign.
 
 - **v0.1 — data layer**: done.
 - **v0.2 — minimal end-to-end workflow**: done.
-- **v0.3 — optional Langfuse node-level tracing**: in progress.
+- **v0.3 — optional Langfuse tracing**: in progress.
 - **Later**: lightweight MCP clause review hints, failure-driven
   decomposition, evaluation metrics, optional web search, domain skill
   expansion.
@@ -268,9 +268,10 @@ to sign or not sign.
 
 Langfuse tracing is optional. If `LANGFUSE_PUBLIC_KEY` and
 `LANGFUSE_SECRET_KEY` are unset, `contract-question-generate` still works with
-no-op tracing. When both keys are set, the CLI records a trace for the existing
-workflow with node-level spans for `LOAD_CLAUSE_SPANS`, `FILTER_RECORDS`,
-`GENERATE_MINIMAL_QUESTIONS`, `SAFETY_CHECK`, and `WRITE_OUTPUT`.
+no-op tracing. When both keys are set, the CLI attaches safe project-level
+metadata to a `contract-question-generate` trace and enables Microsoft Agent
+Framework OpenTelemetry instrumentation for workflow, executor, agent, and chat
+spans.
 
 Set the project-scoped Langfuse keys in `.env` or your shell:
 
@@ -281,18 +282,17 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_TRACING_ENVIRONMENT=local
 ```
 
-Traces include compact run and row-count metadata, but do not include clause
-text, generated questions, legal review questions, full model outputs, or API
-keys. Local artifacts are still written to `run_metadata.json`, `run.log`, and
-`verification_questions.jsonl`; trace id and URL fields are recorded locally
+Traces include compact run metadata, but do not include clause text, prompts,
+responses, generated questions, legal review questions, full model outputs, or
+API keys. Local artifacts are still written to `run_metadata.json`, `run.log`,
+and `verification_questions.jsonl`; trace id and URL fields are recorded locally
 when available. MCP is not part of this PR.
 
-When Langfuse keys are configured, the CLI also enables Microsoft Agent
-Framework OpenTelemetry instrumentation with sensitive data capture disabled.
-This may add provider/agent spans and GenAI usage attributes to Langfuse when
-the OpenRouter/OpenAI-compatible client path exposes them. Token usage display
-therefore depends on provider and client support for OpenTelemetry GenAI usage
-attributes; the project-level node spans remain available either way.
+MAF OpenTelemetry is configured with sensitive data capture disabled. It emits
+workflow/executor spans such as `workflow.run` and `executor.process`, plus
+agent/chat spans such as `invoke_agent` and `chat` when those paths are used.
+Token usage appears when the provider/client exposes OpenTelemetry GenAI usage
+attributes.
 
 Advanced users can override the generated OTLP settings with standard
 OpenTelemetry environment variables, for example:
