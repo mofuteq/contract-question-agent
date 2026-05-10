@@ -74,11 +74,6 @@ async def run_workflow_async(
     session_id = tracing.normalize_session_id(request.run_id)
     trace_name = "contract-question-agent-v0.3"
     trace_tags = ["contract-question-agent", "v0.3"]
-    langgraph_callbacks = tracing.get_langgraph_callbacks(
-        session_id=session_id,
-        trace_name=trace_name,
-        tags=trace_tags,
-    )
     with tracing.session(
         session_id,
         trace_name=trace_name,
@@ -93,11 +88,18 @@ async def run_workflow_async(
                 "dry_run": request.dry_run,
             },
         ):
+            langgraph_callbacks = tracing.get_langgraph_callbacks(
+                session_id=session_id,
+                trace_name=trace_name,
+                tags=trace_tags,
+            )
             result = await graph.ainvoke(
                 {"value": request},
                 config=_graph_config(
                     request,
                     session_id=session_id,
+                    trace_name=trace_name,
+                    tags=trace_tags,
                     callbacks=langgraph_callbacks,
                 ),
             )
@@ -209,8 +211,11 @@ def _graph_config(
     request: GenerateQuestionsRequest,
     *,
     session_id: str,
+    trace_name: str = "contract-question-agent-v0.3",
+    tags: list[str] | None = None,
     callbacks: list[object] | None = None,
 ) -> dict[str, object]:
+    trace_tags = tags or ["contract-question-agent", "v0.3"]
     config: dict[str, object] = {
         "configurable": {
             "thread_id": session_id,
@@ -218,7 +223,14 @@ def _graph_config(
             "session_id": session_id,
             "model_name": request.model_name,
             "dry_run": request.dry_run,
-        }
+        },
+        "metadata": {
+            "langfuse_session_id": session_id,
+            "langfuse_tags": trace_tags,
+            "run_id": request.run_id,
+        },
+        "run_name": trace_name,
+        "tags": trace_tags,
     }
     if callbacks:
         # Manual spans remain the canonical business trace. The LangGraph

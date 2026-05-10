@@ -157,6 +157,14 @@ def get_langgraph_callbacks(
     try:
         from langfuse.langchain import CallbackHandler  # type: ignore[import-not-found]
 
+        client = get_client()
+        trace_id = (
+            client.get_current_trace_id()
+            if client is not None and hasattr(client, "get_current_trace_id")
+            else None
+        )
+        if trace_id:
+            return [CallbackHandler(trace_context={"trace_id": trace_id})]
         return [CallbackHandler()]
     except Exception as err:
         logger.warning("Langfuse LangGraph callback initialization failed: %s", err)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from types import ModuleType
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -342,6 +344,37 @@ def test_langgraph_callbacks_are_disabled_without_langfuse_credentials(monkeypat
     )
 
 
+def test_langgraph_callbacks_use_current_trace_context(monkeypatch):
+    callback_calls: list[dict] = []
+
+    class FakeCallbackHandler:
+        def __init__(self, **kwargs):
+            callback_calls.append(kwargs)
+
+    class FakeClient:
+        def get_current_trace_id(self):
+            return "trace-123"
+
+    langfuse_module = ModuleType("langfuse")
+    langfuse_langchain_module = ModuleType("langfuse.langchain")
+    langfuse_langchain_module.CallbackHandler = FakeCallbackHandler
+
+    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
+    monkeypatch.setattr(tracing, "_ENABLED", True)
+    monkeypatch.setattr(tracing, "get_client", lambda: FakeClient())
+    monkeypatch.setitem(sys.modules, "langfuse", langfuse_module)
+    monkeypatch.setitem(sys.modules, "langfuse.langchain", langfuse_langchain_module)
+
+    callbacks = tracing.get_langgraph_callbacks(
+        session_id="run-123",
+        trace_name="contract-question-agent-v0.3",
+        tags=["contract-question-agent", "v0.3"],
+    )
+
+    assert len(callbacks) == 1
+    assert callback_calls == [{"trace_context": {"trace_id": "trace-123"}}]
+
+
 def test_run_workflow_passes_configurable_run_context_to_langgraph(
     tmp_path,
     monkeypatch,
@@ -391,7 +424,14 @@ def test_run_workflow_passes_configurable_run_context_to_langgraph(
                     "session_id": "workflow-config-test",
                     "model_name": "fake-model",
                     "dry_run": True,
-                }
+                },
+                "metadata": {
+                    "langfuse_session_id": "workflow-config-test",
+                    "langfuse_tags": ["contract-question-agent", "v0.3"],
+                    "run_id": "workflow-config-test",
+                },
+                "run_name": "contract-question-agent-v0.3",
+                "tags": ["contract-question-agent", "v0.3"],
             },
         }
     ]
@@ -449,5 +489,12 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
             "model_name": "fake-model",
             "dry_run": True,
         },
+        "metadata": {
+            "langfuse_session_id": "workflow-callback-test",
+            "langfuse_tags": ["contract-question-agent", "v0.3"],
+            "run_id": "workflow-callback-test",
+        },
+        "run_name": "contract-question-agent-v0.3",
+        "tags": ["contract-question-agent", "v0.3"],
         "callbacks": [callback],
     }
