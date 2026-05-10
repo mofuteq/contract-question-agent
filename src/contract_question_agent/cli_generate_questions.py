@@ -181,7 +181,7 @@ def _run_generator(
         metadata=trace_metadata,
         tags=["contract-question-agent", "v0.3"],
     )
-    logger.info("tracing_enabled=%s", tracing.is_enabled())
+    logger.info("tracing_enabled=%s", tracing.is_active())
     logger.info("langfuse_trace_id=%s", tracing.get_current_trace_id())
     logger.info("langfuse_trace_url=%s", tracing.get_current_trace_url())
     logger.info(

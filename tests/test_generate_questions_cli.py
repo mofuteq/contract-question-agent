@@ -250,6 +250,27 @@ def test_cli_noops_tracing_without_langfuse_env_vars(tmp_path, monkeypatch):
     assert "tracing_enabled=False" in log_text
 
 
+def test_cli_noops_tracing_when_langfuse_client_unavailable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
+    monkeypatch.setattr(tracing, "get_client", lambda: None)
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_dir = tmp_path / "runs"
+    _write_input(input_path, [_span()])
+
+    run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
+
+    metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert tracing.is_configured() is True
+    assert tracing.is_active() is False
+    assert metadata["tracing_enabled"] is False
+    assert metadata["langfuse_trace_id"] is None
+    assert metadata["langfuse_trace_url"] is None
+    assert "tracing_enabled=False" in log_text
+
+
 def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")

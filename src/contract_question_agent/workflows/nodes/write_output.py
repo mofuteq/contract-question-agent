@@ -33,7 +33,7 @@ def write_output_node(state: SafetyCheckedQuestions) -> WrittenQuestions:
         rows_generated=state.rows_generated,
         safety_failed_count=state.safety_failed_count,
         rows_written=len(state.outputs),
-        tracing_enabled=tracing.is_enabled(),
+        tracing_enabled=tracing.is_active(),
         langfuse_trace_id=tracing.get_current_trace_id(),
         langfuse_trace_url=tracing.get_current_trace_url(),
         langfuse_environment=tracing.get_tracing_environment(),

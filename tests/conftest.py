@@ -18,4 +18,5 @@ def reset_langfuse_tracing(monkeypatch):
     ]:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(tracing, "_CLIENT", None)
-    monkeypatch.setattr(tracing, "_ENABLED", None)
+    monkeypatch.setattr(tracing, "_CLIENT_INIT_FAILED", False)
+    monkeypatch.setattr(tracing, "_CONFIGURED", None)

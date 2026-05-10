@@ -6,8 +6,8 @@ Provides `observe`, `update_current_generation`, `update_current_trace`, and
 Credentials are read from environment variables:
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
-- `LANGFUSE_HOST` (default: https://cloud.langfuse.com)
-- `LANGFUSE_BASE_URL` (accepted as an alias for LANGFUSE_HOST)
+- `LANGFUSE_BASE_URL` (default: https://cloud.langfuse.com)
+- `LANGFUSE_HOST` (accepted as a backward-compatible fallback)
 - `LANGFUSE_TRACING_ENVIRONMENT` (default: local)
 
 This module only reads `os.environ`; loading `.env` is the responsibility of
@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-_ENABLED: bool | None = None
+_CONFIGURED: bool | None = None
 _CLIENT: Any = None
+_CLIENT_INIT_FAILED = False
 DEFAULT_LANGFUSE_ENVIRONMENT = "local"
 
 _SENSITIVE_METADATA_KEYS = {
@@ -40,14 +41,24 @@ _SENSITIVE_METADATA_KEYS = {
 }
 
 
-def is_enabled() -> bool:
+def is_configured() -> bool:
     """Return True when Langfuse public+secret keys are configured."""
-    global _ENABLED
-    if _ENABLED is None:
+    global _CONFIGURED
+    if _CONFIGURED is None:
         public = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
         secret = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
-        _ENABLED = bool(public and secret)
-    return _ENABLED
+        _CONFIGURED = bool(public and secret)
+    return _CONFIGURED
+
+
+def is_active() -> bool:
+    """Return True when a usable Langfuse client is available."""
+    return get_client() is not None
+
+
+def is_enabled() -> bool:
+    """Backward-compatible alias for active tracing."""
+    return is_active()
 
 
 def get_client() -> Any:
@@ -55,10 +66,10 @@ def get_client() -> Any:
 
     Trace/observation updates use the cached client when available.
     """
-    global _CLIENT
+    global _CLIENT, _CLIENT_INIT_FAILED
     if _CLIENT is not None:
         return _CLIENT
-    if not is_enabled():
+    if _CLIENT_INIT_FAILED or not is_configured():
         return None
     try:
         from langfuse import Langfuse  # type: ignore[import-not-found]
@@ -76,6 +87,7 @@ def get_client() -> Any:
         logger.info("Langfuse tracing enabled host=%s", host)
         return _CLIENT
     except Exception as err:
+        _CLIENT_INIT_FAILED = True
         logger.warning("Langfuse initialization failed: %s", err)
         return None
 
@@ -91,7 +103,7 @@ def observe(
     as_type: str | None = None,
 ) -> Callable[[F], F]:
     """Return the Langfuse `@observe` decorator, or a no-op when disabled."""
-    if not is_enabled():
+    if not is_active():
         def _passthrough(func: F) -> F:
             return func
         return _passthrough
@@ -189,6 +201,8 @@ __all__ = [
     "get_current_trace_id",
     "get_current_trace_url",
     "get_tracing_environment",
+    "is_active",
+    "is_configured",
     "is_enabled",
     "observe",
     "update_current_generation",
