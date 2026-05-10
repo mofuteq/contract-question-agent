@@ -293,7 +293,10 @@ MAF OpenTelemetry is configured with sensitive data capture disabled. It emits
 workflow/executor spans such as `workflow.run` and `executor.process`, plus
 agent/chat spans such as `invoke_agent` and `chat` when those paths are used.
 Token usage appears when the provider/client exposes OpenTelemetry GenAI usage
-attributes.
+attributes. MAF may also emit framework-internal runtime spans such as
+`edge_group.process`; the current MAF instrumentation does not expose a public
+filter for suppressing those spans without changing the useful workflow and chat
+traces.
 
 Advanced users can override the generated OTLP settings with standard
 OpenTelemetry environment variables, for example:

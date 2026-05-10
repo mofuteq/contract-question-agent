@@ -61,6 +61,8 @@ def configure_maf_otel_if_enabled() -> None:
             enable_instrumentation,
         )
 
+        # MAF 1.3.0 emits edge_group.process spans from workflow internals and
+        # does not expose a public instrumentation filter to suppress them.
         configure_otel_providers(
             enable_sensitive_data=False,
             enable_console_exporters=False,
