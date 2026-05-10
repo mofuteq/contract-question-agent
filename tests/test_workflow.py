@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
@@ -11,6 +12,7 @@ from contract_question_agent.schemas import (
     VerificationQuestion,
     VerificationQuestionOutput,
 )
+from contract_question_agent.workflows import tracing
 from contract_question_agent.workflows import run_workflow
 from contract_question_agent.workflows.nodes.filter_records import filter_clause_spans
 
@@ -213,3 +215,96 @@ def test_run_workflow_metadata_records_safety_failure_count(tmp_path):
     assert metadata["safety_failed_count"] == 1
     assert metadata["rows_written"] == 1
     assert rows[0].safety_status == "failed"
+
+
+def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(input_path, [_span("C1", "Non-Compete", "Do not compete.")])
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-trace-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        limit=1,
+        model_name="fake-model",
+        dry_run=True,
+    )
+    events: list[dict] = []
+    active: list[dict] = []
+    sessions: list[dict] = []
+
+    @contextmanager
+    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+        event = {
+            "name": name,
+            "input": input,
+            "metadata": metadata,
+            "as_type": as_type,
+        }
+        events.append(event)
+        active.append(event)
+        try:
+            yield
+        finally:
+            active.pop()
+
+    def fake_update_current_span(**kwargs):
+        active[-1].update(kwargs)
+
+    @contextmanager
+    def fake_session(session_id, *, trace_name=None, tags=None):
+        sessions.append(
+            {"session_id": session_id, "trace_name": trace_name, "tags": tags}
+        )
+        yield
+
+    monkeypatch.setattr(tracing, "span", fake_span)
+    monkeypatch.setattr(tracing, "session", fake_session)
+    monkeypatch.setattr(tracing, "update_current_span", fake_update_current_span)
+    monkeypatch.setattr(tracing, "flush", lambda: None)
+
+    run_workflow(request, model_client=FakeQuestionClient())
+
+    assert sessions == [
+        {
+            "session_id": "workflow-trace-test",
+            "trace_name": "contract-question-agent-v0.3",
+            "tags": ["contract-question-agent", "v0.3"],
+        }
+    ]
+    assert events[0]["metadata"]["session_id"] == "workflow-trace-test"
+    transition_events = [
+        event for event in events if event["name"] != "contract-question-agent-v0.3"
+    ]
+    assert [event["name"] for event in transition_events] == [
+        "LOAD_CLAUSE_SPANS",
+        "FILTER_RECORDS",
+        "GENERATE_MINIMAL_QUESTIONS",
+        "SAFETY_CHECK",
+        "WRITE_OUTPUT",
+    ]
+    assert transition_events[0]["metadata"] == {
+        "node": "LOAD_CLAUSE_SPANS",
+        "input_state": "GenerateQuestionsRequest",
+        "next_node": "FILTER_RECORDS",
+        "output_state": "LoadedClauseSpans",
+    }
+    assert transition_events[0]["input"]["state"] == "GenerateQuestionsRequest"
+    assert transition_events[0]["output"]["state"] == "LoadedClauseSpans"
+    assert transition_events[0]["output"]["rows_read"] == 1
+    assert transition_events[-1]["metadata"]["next_node"] == "END"
+    assert transition_events[-1]["output"]["rows_written"] == 1
+    assert "evidence_text" not in json.dumps(transition_events)
+
+
+def test_langfuse_session_id_is_ascii_and_under_limit():
+    assert tracing.normalize_session_id("run-123") == "run-123"
+    assert tracing.normalize_session_id("実行-123") == "-123"
+    assert tracing.normalize_session_id("x" * 250) == "x" * 200
+    assert tracing.normalize_session_id("実行") == "contract-question-agent-run"
