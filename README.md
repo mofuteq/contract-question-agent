@@ -19,6 +19,38 @@ Any verification question that future versions generate is a **prompt for
 further investigation** and **must be discussed with a qualified legal
 professional** before being relied upon.
 
+## Design rationale
+
+Contract review usually involves an information asymmetry: the drafter
+knows the clauses, edge cases, and downstream business consequences far
+better than the counter-party reading them. That gap leaves reviewers
+with hidden unknowns, and unknowns make signing decisions risky.
+
+This project does **not** decide whether a clause is legal, enforceable,
+or acceptable, and it does **not** decide whether anyone should sign.
+Those judgments belong to a qualified legal professional and the parties
+involved. Instead, the project generates **verification questions** —
+concrete, clause-grounded prompts that surface what a counter-party may
+want to clarify before relying on the clause.
+
+The design draws on a few familiar ideas from economics:
+
+- **Information asymmetry**: the reviewer has less information than the
+  drafter, and targeted questions are a low-cost way to narrow that gap.
+- **Screening and signaling**: questions help a reviewer screen for
+  terms that warrant deeper attention and give the drafter a channel to
+  signal intent.
+- **Principal-agent problems**: the reviewer's interests and the
+  drafter's interests are not always aligned, and explicit questions
+  make that alignment testable.
+- **Loss aversion**: reviewers tend to weight downside outcomes heavily,
+  so surfacing unknowns up front reduces the cost of acting on them
+  later.
+
+The output is meant to **support** human and professional review, not
+replace it. A generated question is a starting point for further
+investigation — never a verdict.
+
 **v0.1 shipped the data preparation layer only** — no agent, no LLM
 prompts, no question generation, no clause interpretation. This repository
 contains a loader for the
@@ -188,6 +220,49 @@ The workflow calls `model_client.generate()` once per filtered clause span. If
 upstream requests, the duplicate request is likely inside the Microsoft Agent
 Framework Agent structured-output path or provider-side handling, not the v0.2
 workflow wiring.
+
+## Example output
+
+The example below is **illustrative only**. The clause text is synthetic
+and is not drawn from CUAD or any real contract. The questions are sample
+verification prompts, not legal conclusions.
+
+**Clause type**: Non-Compete
+
+**Synthetic clause excerpt**:
+
+> "For a period of twenty-four (24) months following termination of this
+> Agreement for any reason, the Provider shall not, directly or indirectly,
+> engage in any business activity that competes with the Company within
+> any geographic territory in which the Company conducts business."
+
+**Example verification questions**:
+
+1. How is "competes with the Company" intended to be interpreted in
+   practice, and is that interpretation recorded anywhere in the
+   Agreement?
+2. What geographic territories qualify as territories "in which the
+   Company conducts business" at the time of termination, and how are
+   they evidenced?
+3. Does the 24-month restriction apply equally to terminations initiated
+   by the Provider and to terminations initiated by the Company?
+4. Are there roles, industries, or activities that are explicitly carved
+   out of the restriction?
+5. Is any compensation or consideration provided in exchange for the
+   post-termination restriction?
+
+These are prompts for human review. They are not statements about whether
+the clause is enforceable or reasonable, and they are not a recommendation
+to sign or not sign.
+
+## Roadmap
+
+- **v0.1 — data layer**: done.
+- **v0.2 — minimal end-to-end workflow**: done.
+- **v0.3 — optional Langfuse node-level tracing + lightweight MCP clause
+  review hints**: in progress.
+- **Later**: failure-driven decomposition, evaluation metrics, optional
+  web search, domain skill expansion.
 
 ## Scope and disclaimers
 
