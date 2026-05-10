@@ -264,6 +264,29 @@ to sign or not sign.
 - **Later**: failure-driven decomposition, evaluation metrics, optional
   web search, domain skill expansion.
 
+## Optional Langfuse tracing
+
+Langfuse tracing is optional. If `LANGFUSE_PUBLIC_KEY` and
+`LANGFUSE_SECRET_KEY` are unset, `contract-question-generate` still works with
+no-op tracing. When both keys are set, the CLI records a trace for the existing
+workflow with node-level spans for `LOAD_CLAUSE_SPANS`, `FILTER_RECORDS`,
+`GENERATE_MINIMAL_QUESTIONS`, `SAFETY_CHECK`, and `WRITE_OUTPUT`.
+
+Set the project-scoped Langfuse keys in `.env` or your shell:
+
+```bash
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_TRACING_ENVIRONMENT=local
+```
+
+Traces include compact run and row-count metadata, but do not include clause
+text, generated questions, legal review questions, full model outputs, or API
+keys. Local artifacts are still written to `run_metadata.json`, `run.log`, and
+`verification_questions.jsonl`; trace id and URL fields are recorded locally
+when available. MCP is not part of this PR.
+
 ## Scope and disclaimers
 
 - The processed JSONL is intended for **evaluation and research only**.

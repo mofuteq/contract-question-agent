@@ -16,6 +16,7 @@ from contract_question_agent.model_client import (
     OpenRouterQuestionClient,
 )
 from contract_question_agent.safety import SAFETY_DISCLAIMER
+from contract_question_agent import tracing
 from contract_question_agent.schemas import (
     GenerateQuestionsRequest,
     LegalReviewQuestion,
@@ -145,13 +146,55 @@ def main(argv: list[str] | None = None) -> None:
         model_name=model_name,
         dry_run=args.dry_run,
     )
+    trace_metadata = {
+        "app": "contract-question-agent",
+        "run_id": run_id,
+        "input_path": args.input,
+        "output_path": output_path,
+        "metadata_path": metadata_path,
+        "log_path": log_path,
+        "model_name": model_name,
+        "dry_run": args.dry_run,
+        "clause_type": args.clause_type,
+        "contract_id": args.contract_id,
+        "limit": args.limit,
+        "offset": args.offset,
+    }
+    run_generator = tracing.observe(
+        name="contract-question-generate",
+        as_type="span",
+    )(_run_generator)
+    try:
+        result = run_generator(request, model_client, trace_metadata)
+    finally:
+        tracing.flush()
+    print(f"Wrote {result.rows_written} rows to {result.output_path}")
+
+
+def _run_generator(
+    request: GenerateQuestionsRequest,
+    model_client,
+    trace_metadata: dict,
+):
+    tracing.update_current_trace(
+        name="contract-question-generate",
+        metadata=trace_metadata,
+        tags=["contract-question-agent", "v0.3"],
+    )
+    logger.info("tracing_enabled=%s", tracing.is_enabled())
+    logger.info("langfuse_trace_id=%s", tracing.get_current_trace_id())
+    logger.info("langfuse_trace_url=%s", tracing.get_current_trace_url())
+    logger.info(
+        "langfuse_environment=%s",
+        tracing.get_tracing_environment(),
+    )
     result = run_workflow(request, model_client=model_client)
     logger.info("rows_read=%s", result.rows_read)
     logger.info("rows_filtered=%s", result.rows_filtered)
     logger.info("rows_generated=%s", result.rows_generated)
     logger.info("safety_failed_count=%s", result.safety_failed_count)
     logger.info("rows_written=%s", result.rows_written)
-    print(f"Wrote {result.rows_written} rows to {result.output_path}")
+    return result
 
 
 def make_run_id() -> str:

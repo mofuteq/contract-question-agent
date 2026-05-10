@@ -114,6 +114,10 @@ class RunMetadata(_StrictModel):
     rows_generated: NonNegativeInt
     safety_failed_count: NonNegativeInt
     rows_written: NonNegativeInt
+    tracing_enabled: bool = False
+    langfuse_trace_id: str | None = None
+    langfuse_trace_url: str | None = None
+    langfuse_environment: str | None = None
 
 
 class QuestionModelClient(Protocol):

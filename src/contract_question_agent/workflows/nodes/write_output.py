@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from contract_question_agent import tracing
 from contract_question_agent.schemas import (
     RunMetadata,
     SafetyCheckedQuestions,
@@ -32,6 +33,10 @@ def write_output_node(state: SafetyCheckedQuestions) -> WrittenQuestions:
         rows_generated=state.rows_generated,
         safety_failed_count=state.safety_failed_count,
         rows_written=len(state.outputs),
+        tracing_enabled=tracing.is_enabled(),
+        langfuse_trace_id=tracing.get_current_trace_id(),
+        langfuse_trace_url=tracing.get_current_trace_url(),
+        langfuse_environment=tracing.get_tracing_environment(),
     )
     write_run_metadata_json(state.request.metadata_path, metadata)
     return WrittenQuestions(

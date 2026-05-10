@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import inspect
+from functools import wraps
 from pathlib import Path
 
+from contract_question_agent import tracing
 from contract_question_agent.cli_generate_questions import main
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.model_client import DEFAULT_OPENROUTER_MODEL
@@ -115,8 +118,12 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
     assert metadata["rows_generated"] == 1
     assert metadata["safety_failed_count"] == 0
     assert metadata["rows_written"] == 1
+    assert metadata["tracing_enabled"] is False
+    assert metadata["langfuse_trace_id"] is None
+    assert metadata["langfuse_trace_url"] is None
     assert "T" in metadata["created_at"]
     assert "run_id=test-run" in log_text
+    assert "tracing_enabled=False" in log_text
     assert "rows_read=2" in log_text
     assert "rows_filtered=1" in log_text
     assert "rows_generated=1" in log_text
@@ -225,3 +232,128 @@ def test_cli_model_arg_takes_precedence_over_env_and_dotenv(tmp_path, monkeypatc
 
 def test_default_openrouter_model_is_gemini_3_flash_preview():
     assert DEFAULT_OPENROUTER_MODEL == "google/gemini-3-flash-preview"
+
+
+def test_cli_noops_tracing_without_langfuse_env_vars(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_dir = tmp_path / "runs"
+    _write_input(input_path, [_span()])
+
+    run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
+
+    metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    log_text = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert metadata["tracing_enabled"] is False
+    assert metadata["langfuse_trace_id"] is None
+    assert metadata["langfuse_trace_url"] is None
+    assert "tracing_enabled=False" in log_text
+
+
+def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENVIRONMENT", "test")
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_dir = tmp_path / "runs"
+    _write_input(input_path, [_span()])
+    fake_client = FakeLangfuseClient()
+    monkeypatch.setattr(tracing, "_CLIENT", fake_client)
+    monkeypatch.setattr(tracing, "observe", fake_observe(fake_client))
+
+    run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
+
+    span_names = [event[1] for event in fake_client.events if event[0] == "enter"]
+    assert span_names == [
+        "contract-question-generate",
+        "LOAD_CLAUSE_SPANS",
+        "FILTER_RECORDS",
+        "GENERATE_MINIMAL_QUESTIONS",
+        "SAFETY_CHECK",
+        "WRITE_OUTPUT",
+    ]
+    metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["tracing_enabled"] is True
+    assert metadata["langfuse_trace_id"] == "trace-123"
+    assert metadata["langfuse_trace_url"] == "https://langfuse.test/trace-123"
+    assert metadata["langfuse_environment"] == "test"
+    updated_metadata = {
+        event[1]: event[2] for event in fake_client.events if event[0] == "update"
+    }
+    assert updated_metadata["LOAD_CLAUSE_SPANS"] == {"rows_read": 1}
+    assert updated_metadata["FILTER_RECORDS"] == {
+        "rows_read": 1,
+        "rows_filtered": 1,
+    }
+    assert updated_metadata["GENERATE_MINIMAL_QUESTIONS"] == {
+        "rows_filtered": 1,
+        "rows_generated": 1,
+        "model_name": DEFAULT_OPENROUTER_MODEL,
+        "dry_run": True,
+    }
+    assert updated_metadata["SAFETY_CHECK"] == {
+        "rows_generated": 1,
+        "safety_failed_count": 0,
+    }
+    assert updated_metadata["WRITE_OUTPUT"] == {
+        "rows_written": 1,
+        "output_path": str(run_dir / "verification_questions.jsonl"),
+        "metadata_path": str(run_dir / "run_metadata.json"),
+        "log_path": str(run_dir / "run.log"),
+    }
+    assert fake_client.flushed is True
+
+
+class FakeLangfuseClient:
+    trace_id = "trace-123"
+
+    def __init__(self) -> None:
+        self.events = []
+        self.flushed = False
+
+    def get_current_trace_id(self):
+        return self.trace_id
+
+    def get_trace_url(self, *, trace_id):
+        return f"https://langfuse.test/{trace_id}"
+
+    def update_current_generation(self, **kwargs):
+        metadata = kwargs.get("metadata", {})
+        self.events.append(("update", self.events[-1][1], metadata))
+
+    def update_current_trace(self, **kwargs):
+        self.trace_metadata = kwargs
+
+    def flush(self):
+        self.flushed = True
+
+
+def fake_observe(fake_client: FakeLangfuseClient):
+    def _observe(*, name=None, as_type=None):
+        assert as_type == "span"
+
+        def _decorator(func):
+            @wraps(func)
+            def _wrapper(*args, **kwargs):
+                fake_client.events.append(("enter", name, {}))
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    fake_client.events.append(("exit", name, None))
+
+            @wraps(func)
+            async def _async_wrapper(*args, **kwargs):
+                fake_client.events.append(("enter", name, {}))
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    fake_client.events.append(("exit", name, None))
+
+            if inspect.iscoroutinefunction(func):
+                return _async_wrapper
+            return _wrapper
+
+        return _decorator
+
+    return _observe
