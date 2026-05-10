@@ -99,6 +99,51 @@ def test_openrouter_client_validates_dict_like_response_value():
     assert output.model_name == "dict-model"
 
 
+def test_openrouter_client_reads_parsed_raw_response_value():
+    payload = _output().model_copy(update={"model_name": "parsed-model"}).model_dump()
+    raw_choice = SimpleNamespace(message=SimpleNamespace(parsed=payload))
+    raw_response = SimpleNamespace(choices=[raw_choice])
+    agent = FakeAgent(SimpleNamespace(value=None, text="", raw_representation=raw_response))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    output = asyncio.run(client.generate(_span()))
+
+    assert output.contract_id == "C1"
+    assert output.model_name == "parsed-model"
+
+
+def test_openrouter_client_empty_response_error_is_safe():
+    agent = FakeAgent(
+        SimpleNamespace(
+            value=None,
+            text="",
+            messages=[],
+            finish_reason="stop",
+            raw_representation=SimpleNamespace(),
+        )
+    )
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    try:
+        asyncio.run(client.generate(_span()))
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected ValueError for empty response.")
+
+    assert "OpenRouter agent response did not contain structured output." in message
+    assert "response_type=SimpleNamespace" in message
+    assert "Employee will not compete" not in message
+
+
 def test_openrouter_client_reads_api_key_from_environment(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
     agent = FakeAgent(SimpleNamespace(value=_output(), text=""))

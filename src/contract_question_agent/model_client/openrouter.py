@@ -73,7 +73,7 @@ class OpenRouterQuestionClient:
 
 
 def _coerce_agent_response(response: Any, model_name: str) -> VerificationQuestionOutput:
-    value = getattr(response, "value", None)
+    value = _safe_getattr(response, "value")
     if isinstance(value, VerificationQuestionOutput):
         return _with_generation_defaults(value, model_name)
     if value is not None:
@@ -82,13 +82,79 @@ def _coerce_agent_response(response: Any, model_name: str) -> VerificationQuesti
             model_name,
         )
 
-    text = getattr(response, "text", None)
+    raw_value = _extract_raw_structured_value(response)
+    if raw_value is not None:
+        return _with_generation_defaults(
+            VerificationQuestionOutput.model_validate(raw_value),
+            model_name,
+        )
+
+    text = _safe_getattr(response, "text")
     if not isinstance(text, str) or not text.strip():
-        raise ValueError("OpenRouter agent response did not contain structured output.")
+        raise ValueError(
+            "OpenRouter agent response did not contain structured output. "
+            f"{_safe_response_summary(response)}"
+        )
     parsed = json.loads(text)
     return _with_generation_defaults(
         VerificationQuestionOutput.model_validate(parsed),
         model_name,
+    )
+
+
+def _safe_getattr(obj: Any, name: str) -> Any:
+    try:
+        return getattr(obj, name, None)
+    except Exception:
+        return None
+
+
+def _extract_raw_structured_value(response: Any) -> Any | None:
+    raw = _safe_getattr(response, "raw_representation")
+    for candidate in _iter_raw_candidates(raw):
+        if isinstance(candidate, VerificationQuestionOutput):
+            return candidate
+        if isinstance(candidate, dict) and _looks_like_question_output(candidate):
+            return candidate
+    return None
+
+
+def _iter_raw_candidates(raw: Any):
+    if raw is None:
+        return
+    for attr in ("value", "parsed", "output_parsed"):
+        value = _safe_getattr(raw, attr)
+        if value is not None:
+            yield value
+    nested = _safe_getattr(raw, "raw_representation")
+    if nested is not None and nested is not raw:
+        yield from _iter_raw_candidates(nested)
+    choices = _safe_getattr(raw, "choices")
+    if choices:
+        for choice in choices:
+            message = _safe_getattr(choice, "message")
+            if message is not None:
+                yield from _iter_raw_candidates(message)
+
+
+def _looks_like_question_output(value: dict) -> bool:
+    return {
+        "contract_id",
+        "clause_type",
+        "evidence_text",
+        "verification_questions",
+    }.issubset(value)
+
+
+def _safe_response_summary(response: Any) -> str:
+    raw = _safe_getattr(response, "raw_representation")
+    messages = _safe_getattr(response, "messages") or []
+    finish_reason = _safe_getattr(response, "finish_reason")
+    return (
+        f"response_type={type(response).__name__} "
+        f"raw_type={type(raw).__name__ if raw is not None else None} "
+        f"message_count={len(messages) if hasattr(messages, '__len__') else None} "
+        f"finish_reason={finish_reason!r}"
     )
 
 
