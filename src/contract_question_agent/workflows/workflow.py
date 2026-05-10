@@ -1,4 +1,9 @@
-"""LangGraph workflow assembly for verification-question generation."""
+"""LangGraph orchestration for verification-question generation.
+
+LangGraph owns workflow state transitions and business-readable tracing here.
+Node-internal LLM calling remains delegated to the configured model client,
+including the existing MAF-backed OpenRouter client path.
+"""
 
 from __future__ import annotations
 
