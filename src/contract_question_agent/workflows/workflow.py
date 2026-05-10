@@ -234,8 +234,9 @@ def _graph_config(
     }
     if callbacks:
         # Manual spans remain the canonical business trace. The LangGraph
-        # callback is opt-in because it may add framework-level observations;
-        # its main purpose is Langfuse Agent Graph visualization.
+        # callback may add framework-level observations; it is enabled by
+        # default for Langfuse Agent Graph visualization and can be disabled
+        # with LANGFUSE_LANGGRAPH_CALLBACK_ENABLED=false.
         config["callbacks"] = callbacks
     return config
 

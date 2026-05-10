@@ -150,7 +150,12 @@ def get_langgraph_callbacks(
     tags: list[str] | None = None,
 ) -> list[Any]:
     """Return optional Langfuse LangGraph callbacks for graph visualization."""
-    if os.getenv(LANGGRAPH_CALLBACK_ENV, "").strip().lower() != "true":
+    if os.getenv(LANGGRAPH_CALLBACK_ENV, "true").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
         return []
     if not is_enabled():
         return []
