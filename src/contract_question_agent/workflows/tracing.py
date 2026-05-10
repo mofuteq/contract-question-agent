@@ -25,6 +25,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _ENABLED: bool | None = None
 _CLIENT: Any = None
+LANGGRAPH_CALLBACK_ENV = "LANGFUSE_LANGGRAPH_CALLBACK_ENABLED"
 
 
 def is_enabled() -> bool:
@@ -140,6 +141,32 @@ def normalize_session_id(value: str) -> str:
     if not normalized:
         normalized = "contract-question-agent-run"
     return normalized[:200]
+
+
+def get_langgraph_callbacks(
+    *,
+    session_id: str,
+    trace_name: str,
+    tags: list[str] | None = None,
+) -> list[Any]:
+    """Return optional Langfuse LangGraph callbacks for graph visualization."""
+    if os.getenv(LANGGRAPH_CALLBACK_ENV, "").strip().lower() != "true":
+        return []
+    if not is_enabled():
+        return []
+    try:
+        from langfuse.langchain import CallbackHandler  # type: ignore[import-not-found]
+
+        return [CallbackHandler()]
+    except Exception as err:
+        logger.warning("Langfuse LangGraph callback initialization failed: %s", err)
+        logger.debug(
+            "Langfuse LangGraph callback context session_id=%s trace_name=%s tags=%s",
+            session_id,
+            trace_name,
+            tags,
+        )
+        return []
 
 
 @contextmanager
@@ -261,6 +288,7 @@ def flush() -> None:
 __all__ = [
     "flush",
     "get_client",
+    "get_langgraph_callbacks",
     "is_enabled",
     "observe",
     "normalize_session_id",

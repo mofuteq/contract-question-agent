@@ -72,13 +72,20 @@ async def run_workflow_async(
     """Async workflow entrypoint, useful for tests and embedding."""
     graph = build_workflow(model_client=model_client)
     session_id = tracing.normalize_session_id(request.run_id)
+    trace_name = "contract-question-agent-v0.3"
+    trace_tags = ["contract-question-agent", "v0.3"]
+    langgraph_callbacks = tracing.get_langgraph_callbacks(
+        session_id=session_id,
+        trace_name=trace_name,
+        tags=trace_tags,
+    )
     with tracing.session(
         session_id,
-        trace_name="contract-question-agent-v0.3",
-        tags=["contract-question-agent", "v0.3"],
+        trace_name=trace_name,
+        tags=trace_tags,
     ):
         with tracing.span(
-            "contract-question-agent-v0.3",
+            trace_name,
             input=_request_summary(request),
             metadata={
                 "run_id": request.run_id,
@@ -88,7 +95,11 @@ async def run_workflow_async(
         ):
             result = await graph.ainvoke(
                 {"value": request},
-                config=_graph_config(request, session_id=session_id),
+                config=_graph_config(
+                    request,
+                    session_id=session_id,
+                    callbacks=langgraph_callbacks,
+                ),
             )
             output = result["value"]
             if not isinstance(output, WrittenQuestions):
@@ -198,8 +209,9 @@ def _graph_config(
     request: GenerateQuestionsRequest,
     *,
     session_id: str,
-) -> dict[str, dict[str, object]]:
-    return {
+    callbacks: list[object] | None = None,
+) -> dict[str, object]:
+    config: dict[str, object] = {
         "configurable": {
             "thread_id": session_id,
             "run_id": request.run_id,
@@ -208,6 +220,12 @@ def _graph_config(
             "dry_run": request.dry_run,
         }
     }
+    if callbacks:
+        # Manual spans remain the canonical business trace. The LangGraph
+        # callback is opt-in because it may add framework-level observations;
+        # its main purpose is Langfuse Agent Graph visualization.
+        config["callbacks"] = callbacks
+    return config
 
 
 def _written_summary(written: WrittenQuestions) -> dict[str, object]:

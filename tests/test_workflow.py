@@ -269,6 +269,7 @@ def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tracing, "span", fake_span)
     monkeypatch.setattr(tracing, "session", fake_session)
+    monkeypatch.setattr(tracing, "get_langgraph_callbacks", lambda **kwargs: [])
     monkeypatch.setattr(tracing, "update_current_span", fake_update_current_span)
     monkeypatch.setattr(tracing, "flush", lambda: None)
 
@@ -313,6 +314,34 @@ def test_langfuse_session_id_is_ascii_and_under_limit():
     assert tracing.normalize_session_id("実行") == "contract-question-agent-run"
 
 
+def test_langgraph_callbacks_are_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", raising=False)
+    monkeypatch.setattr(tracing, "_ENABLED", True)
+
+    assert (
+        tracing.get_langgraph_callbacks(
+            session_id="run-123",
+            trace_name="contract-question-agent-v0.3",
+        )
+        == []
+    )
+
+
+def test_langgraph_callbacks_are_disabled_without_langfuse_credentials(monkeypatch):
+    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.setattr(tracing, "_ENABLED", None)
+
+    assert (
+        tracing.get_langgraph_callbacks(
+            session_id="run-123",
+            trace_name="contract-question-agent-v0.3",
+        )
+        == []
+    )
+
+
 def test_run_workflow_passes_configurable_run_context_to_langgraph(
     tmp_path,
     monkeypatch,
@@ -345,6 +374,7 @@ def test_run_workflow_passes_configurable_run_context_to_langgraph(
             return {"value": written}
 
     monkeypatch.setattr(workflow, "build_workflow", lambda *, model_client: FakeGraph())
+    monkeypatch.setattr(tracing, "get_langgraph_callbacks", lambda **kwargs: [])
 
     result = asyncio.run(
         run_workflow_async(request, model_client=FakeQuestionClient())
@@ -365,3 +395,59 @@ def test_run_workflow_passes_configurable_run_context_to_langgraph(
             },
         }
     ]
+
+
+def test_run_workflow_passes_langgraph_callbacks_when_enabled(
+    tmp_path,
+    monkeypatch,
+):
+    request = GenerateQuestionsRequest(
+        input_path=tmp_path / "clause_spans.jsonl",
+        output_path=tmp_path / "verification_questions.jsonl",
+        metadata_path=tmp_path / "run_metadata.json",
+        log_path=tmp_path / "run.log",
+        run_id="workflow-callback-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        model_name="fake-model",
+        dry_run=True,
+    )
+    written = WrittenQuestions(
+        output_path=request.output_path,
+        metadata_path=request.metadata_path,
+        log_path=request.log_path,
+        rows_read=0,
+        rows_filtered=0,
+        rows_generated=0,
+        safety_failed_count=0,
+        rows_written=0,
+    )
+    callback = object()
+    calls: list[dict] = []
+
+    class FakeGraph:
+        async def ainvoke(self, state, *, config=None):
+            calls.append({"state": state, "config": config})
+            return {"value": written}
+
+    monkeypatch.setattr(workflow, "build_workflow", lambda *, model_client: FakeGraph())
+    monkeypatch.setattr(
+        tracing,
+        "get_langgraph_callbacks",
+        lambda **kwargs: [callback],
+    )
+
+    result = asyncio.run(
+        run_workflow_async(request, model_client=FakeQuestionClient())
+    )
+
+    assert result == written
+    assert calls[0]["config"] == {
+        "configurable": {
+            "thread_id": "workflow-callback-test",
+            "run_id": "workflow-callback-test",
+            "session_id": "workflow-callback-test",
+            "model_name": "fake-model",
+            "dry_run": True,
+        },
+        "callbacks": [callback],
+    }
