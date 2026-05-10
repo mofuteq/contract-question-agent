@@ -148,7 +148,8 @@ def main(argv: list[str] | None = None) -> None:
         dry_run=args.dry_run,
     )
     try:
-        result = _run_generator(request, model_client)
+        with tracing.trace_run_session(run_id):
+            result = _run_generator(request, model_client)
     finally:
         tracing.flush()
     print(f"Wrote {result.rows_written} rows to {result.output_path}")

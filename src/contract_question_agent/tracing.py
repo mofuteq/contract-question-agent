@@ -15,13 +15,19 @@ OpenTelemetry spans are the source of workflow, agent, chat, and token traces.
 import logging
 import os
 from base64 import b64encode
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
 _CONFIGURED: bool | None = None
 _MAF_OTEL_CONFIGURED = False
+_SESSION_ATTRIBUTE_PROCESSOR_CONFIGURED = False
 DEFAULT_LANGFUSE_ENVIRONMENT = "local"
 DEFAULT_LANGFUSE_BASE_URL = "https://cloud.langfuse.com"
+LANGFUSE_SESSION_ATTRIBUTE = "langfuse.session.id"
+OTEL_SESSION_ATTRIBUTE = "session.id"
+LANGFUSE_TRACE_NAME_ATTRIBUTE = "langfuse.trace.name"
 
 
 def is_configured() -> bool:
@@ -67,10 +73,40 @@ def configure_maf_otel_if_enabled() -> None:
             enable_sensitive_data=False,
             enable_console_exporters=False,
         )
+        _configure_session_attribute_processor()
         enable_instrumentation(enable_sensitive_data=False)
         _MAF_OTEL_CONFIGURED = True
     except Exception as err:
         logger.warning("MAF OpenTelemetry setup failed: %s", err)
+
+
+@contextmanager
+def trace_run_session(
+    session_id: str,
+    *,
+    trace_name: str = "contract-question-generate",
+) -> Iterator[None]:
+    """Propagate safe session attributes to MAF OTel spans for one CLI run."""
+    if not session_id:
+        yield
+        return
+
+    try:
+        from opentelemetry import baggage, context  # type: ignore[import-not-found]
+
+        ctx = baggage.set_baggage(LANGFUSE_SESSION_ATTRIBUTE, session_id)
+        ctx = baggage.set_baggage(OTEL_SESSION_ATTRIBUTE, session_id, context=ctx)
+        ctx = baggage.set_baggage(LANGFUSE_TRACE_NAME_ATTRIBUTE, trace_name, context=ctx)
+        token = context.attach(ctx)
+    except Exception as err:
+        logger.debug("OTel session propagation setup failed: %s", err)
+        yield
+        return
+
+    try:
+        yield
+    finally:
+        context.detach(token)
 
 
 def get_current_trace_id() -> str | None:
@@ -102,6 +138,7 @@ __all__ = [
     "is_active",
     "is_configured",
     "is_enabled",
+    "trace_run_session",
 ]
 
 
@@ -145,3 +182,54 @@ def _set_otel_resource_attribute(key: str, value: str) -> None:
         return
     parts.append(f"{key}={value}")
     os.environ["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(parts)
+
+
+def _configure_session_attribute_processor() -> None:
+    global _SESSION_ATTRIBUTE_PROCESSOR_CONFIGURED
+    if _SESSION_ATTRIBUTE_PROCESSOR_CONFIGURED:
+        return
+
+    try:
+        from opentelemetry import trace  # type: ignore[import-not-found]
+
+        provider = trace.get_tracer_provider()
+        add_span_processor = getattr(provider, "add_span_processor", None)
+        if add_span_processor is None:
+            return
+        add_span_processor(_SessionAttributeSpanProcessor())
+        _SESSION_ATTRIBUTE_PROCESSOR_CONFIGURED = True
+    except Exception as err:
+        logger.debug("OTel session span processor setup failed: %s", err)
+
+
+class _SessionAttributeSpanProcessor:
+    """Copy safe Langfuse session baggage onto every started span."""
+
+    _BAGGAGE_KEYS = (
+        LANGFUSE_SESSION_ATTRIBUTE,
+        OTEL_SESSION_ATTRIBUTE,
+        LANGFUSE_TRACE_NAME_ATTRIBUTE,
+    )
+
+    def on_start(self, span, parent_context=None) -> None:
+        try:
+            from opentelemetry import baggage  # type: ignore[import-not-found]
+
+            for key in self._BAGGAGE_KEYS:
+                value = baggage.get_baggage(key, context=parent_context)
+                if value:
+                    span.set_attribute(key, str(value))
+        except Exception:
+            return
+
+    def on_end(self, span) -> None:
+        return None
+
+    def _on_ending(self, span) -> None:
+        self.on_end(span)
+
+    def shutdown(self) -> None:
+        return None
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return True

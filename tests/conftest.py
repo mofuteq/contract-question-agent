@@ -27,3 +27,4 @@ def reset_langfuse_tracing(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(tracing, "_CONFIGURED", None)
     monkeypatch.setattr(tracing, "_MAF_OTEL_CONFIGURED", False)
+    monkeypatch.setattr(tracing, "_SESSION_ATTRIBUTE_PROCESSOR_CONFIGURED", False)
