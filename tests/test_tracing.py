@@ -21,6 +21,7 @@ def test_maf_otel_setup_skips_without_langfuse_env(monkeypatch):
     tracing.configure_maf_otel_if_enabled()
 
     assert calls == []
+    assert tracing.is_active() is False
 
 
 def test_maf_otel_setup_configures_once_with_safe_defaults(monkeypatch):
@@ -53,11 +54,16 @@ def test_maf_otel_setup_configures_once_with_safe_defaults(monkeypatch):
     )
     assert os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
     assert os.environ["OTEL_SERVICE_NAME"] == "contract-question-agent"
+    assert (
+        os.environ["OTEL_RESOURCE_ATTRIBUTES"]
+        == "deployment.environment.name=local"
+    )
     assert "Authorization=Basic " in os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"]
     assert "x-langfuse-ingestion-version=4" in os.environ[
         "OTEL_EXPORTER_OTLP_TRACES_HEADERS"
     ]
     assert os.environ.get("ENABLE_SENSITIVE_DATA") is None
+    assert tracing.is_active() is True
 
 
 def test_maf_otel_setup_failure_is_noop(monkeypatch):
@@ -77,3 +83,4 @@ def test_maf_otel_setup_failure_is_noop(monkeypatch):
     )
 
     tracing.configure_maf_otel_if_enabled()
+    assert tracing.is_active() is False

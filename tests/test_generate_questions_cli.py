@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import inspect
-from functools import wraps
 from pathlib import Path
 
 from contract_question_agent import tracing
@@ -250,11 +248,10 @@ def test_cli_noops_tracing_without_langfuse_env_vars(tmp_path, monkeypatch):
     assert "tracing_enabled=False" in log_text
 
 
-def test_cli_noops_tracing_when_langfuse_client_unavailable(tmp_path, monkeypatch):
+def test_cli_noops_tracing_when_maf_otel_unavailable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
-    monkeypatch.setattr(tracing, "get_client", lambda: None)
     monkeypatch.setattr(tracing, "configure_maf_otel_if_enabled", lambda: None)
     input_path = tmp_path / "clause_spans.jsonl"
     output_dir = tmp_path / "runs"
@@ -272,7 +269,7 @@ def test_cli_noops_tracing_when_langfuse_client_unavailable(tmp_path, monkeypatc
     assert "tracing_enabled=False" in log_text
 
 
-def test_cli_records_fake_langfuse_root_trace_metadata(tmp_path, monkeypatch):
+def test_cli_marks_tracing_active_when_maf_otel_configures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
@@ -280,41 +277,26 @@ def test_cli_records_fake_langfuse_root_trace_metadata(tmp_path, monkeypatch):
     input_path = tmp_path / "clause_spans.jsonl"
     output_dir = tmp_path / "runs"
     _write_input(input_path, [_span()])
-    fake_client = FakeLangfuseClient()
     maf_otel_calls = []
-    monkeypatch.setattr(tracing, "_CLIENT", fake_client)
-    monkeypatch.setattr(tracing, "observe", fake_observe(fake_client))
+
+    def fake_configure_maf_otel():
+        maf_otel_calls.append("called")
+        monkeypatch.setattr(tracing, "_MAF_OTEL_CONFIGURED", True)
+
     monkeypatch.setattr(
         tracing,
         "configure_maf_otel_if_enabled",
-        lambda: maf_otel_calls.append("called"),
+        fake_configure_maf_otel,
     )
 
     run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
 
-    span_names = [event[1] for event in fake_client.events if event[0] == "enter"]
-    assert span_names == ["contract-question-generate"]
     metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
     assert metadata["tracing_enabled"] is True
-    assert metadata["langfuse_trace_id"] == "trace-123"
-    assert metadata["langfuse_trace_url"] == "https://langfuse.test/trace-123"
+    assert metadata["langfuse_trace_id"] is None
+    assert metadata["langfuse_trace_url"] is None
     assert metadata["langfuse_environment"] == "test"
-    assert fake_client.trace_metadata["session_id"] == "test-run"
-    assert fake_client.trace_metadata["metadata"]["run_id"] == "test-run"
     assert maf_otel_calls == ["called"]
-    forbidden_metadata_keys = {
-        "api_key",
-        "evidence_text",
-        "generated_questions",
-        "legal_review_questions",
-        "model_output",
-        "openrouter_api_key",
-        "raw_contract_content",
-        "verification_questions",
-    }
-    assert forbidden_metadata_keys.isdisjoint(fake_client.trace_metadata["metadata"])
-    assert not [event for event in fake_client.events if event[0] == "update"]
-    assert fake_client.flushed is True
 
 
 def test_cli_continues_when_maf_otel_setup_fails(tmp_path, monkeypatch):
@@ -329,7 +311,6 @@ def test_cli_continues_when_maf_otel_setup_fails(tmp_path, monkeypatch):
         raise AssertionError("simulated MAF OTel setup failure")
 
     monkeypatch.setattr(tracing, "_configure_langfuse_otel_env", fail_maf_otel_setup)
-    monkeypatch.setattr(tracing, "get_client", lambda: None)
 
     run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
 
@@ -337,57 +318,3 @@ def test_cli_continues_when_maf_otel_setup_fails(tmp_path, monkeypatch):
     assert metadata["tracing_enabled"] is False
     assert metadata["langfuse_trace_id"] is None
     assert metadata["langfuse_trace_url"] is None
-
-
-class FakeLangfuseClient:
-    trace_id = "trace-123"
-
-    def __init__(self) -> None:
-        self.events = []
-        self.flushed = False
-
-    def get_current_trace_id(self):
-        return self.trace_id
-
-    def get_trace_url(self, *, trace_id):
-        return f"https://langfuse.test/{trace_id}"
-
-    def update_current_generation(self, **kwargs):
-        metadata = kwargs.get("metadata", {})
-        self.events.append(("update", self.events[-1][1], metadata))
-
-    def update_current_trace(self, **kwargs):
-        self.trace_metadata = kwargs
-
-    def flush(self):
-        self.flushed = True
-
-
-def fake_observe(fake_client: FakeLangfuseClient):
-    def _observe(*, name=None, as_type=None):
-        assert as_type == "span"
-
-        def _decorator(func):
-            @wraps(func)
-            def _wrapper(*args, **kwargs):
-                fake_client.events.append(("enter", name, {}))
-                try:
-                    return func(*args, **kwargs)
-                finally:
-                    fake_client.events.append(("exit", name, None))
-
-            @wraps(func)
-            async def _async_wrapper(*args, **kwargs):
-                fake_client.events.append(("enter", name, {}))
-                try:
-                    return await func(*args, **kwargs)
-                finally:
-                    fake_client.events.append(("exit", name, None))
-
-            if inspect.iscoroutinefunction(func):
-                return _async_wrapper
-            return _wrapper
-
-        return _decorator
-
-    return _observe

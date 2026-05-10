@@ -18,13 +18,12 @@ def reset_langfuse_tracing(monkeypatch):
         "OTEL_EXPORTER_OTLP_HEADERS",
         "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
         "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_RESOURCE_ATTRIBUTES",
         "OTEL_SERVICE_NAME",
         "ENABLE_SENSITIVE_DATA",
         "OPENROUTER_API_KEY",
         "OPENROUTER_MODEL",
     ]:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(tracing, "_CLIENT", None)
-    monkeypatch.setattr(tracing, "_CLIENT_INIT_FAILED", False)
     monkeypatch.setattr(tracing, "_CONFIGURED", None)
     monkeypatch.setattr(tracing, "_MAF_OTEL_CONFIGURED", False)

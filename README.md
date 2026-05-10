@@ -268,10 +268,10 @@ to sign or not sign.
 
 Langfuse tracing is optional. If `LANGFUSE_PUBLIC_KEY` and
 `LANGFUSE_SECRET_KEY` are unset, `contract-question-generate` still works with
-no-op tracing. When both keys are set, the CLI attaches safe project-level
-metadata to a `contract-question-generate` trace and enables Microsoft Agent
+no-op tracing. When both keys are set, the CLI enables Microsoft Agent
 Framework OpenTelemetry instrumentation for workflow, executor, agent, and chat
-spans.
+spans. The project does not create extra manual Langfuse SDK observations for
+workflow nodes, so the MAF spans remain the primary trace.
 
 Set the project-scoped Langfuse keys in `.env` or your shell:
 
@@ -282,11 +282,12 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 LANGFUSE_TRACING_ENVIRONMENT=local
 ```
 
-Traces include compact run metadata, but do not include clause text, prompts,
-responses, generated questions, legal review questions, full model outputs, or
-API keys. Local artifacts are still written to `run_metadata.json`, `run.log`,
-and `verification_questions.jsonl`; trace id and URL fields are recorded locally
-when available. MCP is not part of this PR.
+Traces do not include clause text, prompts, responses, generated questions,
+legal review questions, full model outputs, or API keys. Local artifacts are
+still written to `run_metadata.json`, `run.log`, and
+`verification_questions.jsonl`; tracing status and environment are recorded
+locally, while trace id and URL fields remain null because trace identity is
+owned by the OpenTelemetry backend. MCP is not part of this PR.
 
 MAF OpenTelemetry is configured with sensitive data capture disabled. It emits
 workflow/executor spans such as `workflow.run` and `executor.process`, plus
