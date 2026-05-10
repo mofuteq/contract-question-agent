@@ -108,6 +108,7 @@ def main(argv: list[str] | None = None) -> None:
     metadata_path = run_dir / METADATA_FILENAME
     log_path = run_dir / LOG_FILENAME
     model_name = args.model or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+    tracing.configure_maf_otel_if_enabled()
     if args.dry_run:
         model_client = DryRunQuestionClient(model_name)
     else:

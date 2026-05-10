@@ -259,10 +259,10 @@ to sign or not sign.
 
 - **v0.1 — data layer**: done.
 - **v0.2 — minimal end-to-end workflow**: done.
-- **v0.3 — optional Langfuse node-level tracing + lightweight MCP clause
-  review hints**: in progress.
-- **Later**: failure-driven decomposition, evaluation metrics, optional
-  web search, domain skill expansion.
+- **v0.3 — optional Langfuse node-level tracing**: in progress.
+- **Later**: lightweight MCP clause review hints, failure-driven
+  decomposition, evaluation metrics, optional web search, domain skill
+  expansion.
 
 ## Optional Langfuse tracing
 
@@ -286,6 +286,24 @@ text, generated questions, legal review questions, full model outputs, or API
 keys. Local artifacts are still written to `run_metadata.json`, `run.log`, and
 `verification_questions.jsonl`; trace id and URL fields are recorded locally
 when available. MCP is not part of this PR.
+
+When Langfuse keys are configured, the CLI also enables Microsoft Agent
+Framework OpenTelemetry instrumentation with sensitive data capture disabled.
+This may add provider/agent spans and GenAI usage attributes to Langfuse when
+the OpenRouter/OpenAI-compatible client path exposes them. Token usage display
+therefore depends on provider and client support for OpenTelemetry GenAI usage
+attributes; the project-level node spans remain available either way.
+
+Advanced users can override the generated OTLP settings with standard
+OpenTelemetry environment variables, for example:
+
+```bash
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Basic <base64(public:secret)>,x-langfuse-ingestion-version=4"
+```
+
+Do not set `ENABLE_SENSITIVE_DATA=true` for contract runs.
 
 ## Scope and disclaimers
 

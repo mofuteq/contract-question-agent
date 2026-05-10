@@ -255,6 +255,7 @@ def test_cli_noops_tracing_when_langfuse_client_unavailable(tmp_path, monkeypatc
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
     monkeypatch.setattr(tracing, "get_client", lambda: None)
+    monkeypatch.setattr(tracing, "configure_maf_otel_if_enabled", lambda: None)
     input_path = tmp_path / "clause_spans.jsonl"
     output_dir = tmp_path / "runs"
     _write_input(input_path, [_span()])
@@ -280,8 +281,14 @@ def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
     output_dir = tmp_path / "runs"
     _write_input(input_path, [_span()])
     fake_client = FakeLangfuseClient()
+    maf_otel_calls = []
     monkeypatch.setattr(tracing, "_CLIENT", fake_client)
     monkeypatch.setattr(tracing, "observe", fake_observe(fake_client))
+    monkeypatch.setattr(
+        tracing,
+        "configure_maf_otel_if_enabled",
+        lambda: maf_otel_calls.append("called"),
+    )
 
     run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
 
@@ -301,6 +308,18 @@ def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
     assert metadata["langfuse_environment"] == "test"
     assert fake_client.trace_metadata["session_id"] == "test-run"
     assert fake_client.trace_metadata["metadata"]["run_id"] == "test-run"
+    assert maf_otel_calls == ["called"]
+    forbidden_metadata_keys = {
+        "api_key",
+        "evidence_text",
+        "generated_questions",
+        "legal_review_questions",
+        "model_output",
+        "openrouter_api_key",
+        "raw_contract_content",
+        "verification_questions",
+    }
+    assert forbidden_metadata_keys.isdisjoint(fake_client.trace_metadata["metadata"])
     updated_metadata = {
         event[1]: event[2] for event in fake_client.events if event[0] == "update"
     }
@@ -326,6 +345,28 @@ def test_cli_records_fake_langfuse_trace_and_node_spans(tmp_path, monkeypatch):
         "log_path": str(run_dir / "run.log"),
     }
     assert fake_client.flushed is True
+
+
+def test_cli_continues_when_maf_otel_setup_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "fake-public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "fake-secret")
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_dir = tmp_path / "runs"
+    _write_input(input_path, [_span()])
+
+    def fail_maf_otel_setup():
+        raise AssertionError("simulated MAF OTel setup failure")
+
+    monkeypatch.setattr(tracing, "_configure_langfuse_otel_env", fail_maf_otel_setup)
+    monkeypatch.setattr(tracing, "get_client", lambda: None)
+
+    run_dir = _run_cli(input_path, output_dir, extra_args=["--dry-run"])
+
+    metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["tracing_enabled"] is False
+    assert metadata["langfuse_trace_id"] is None
+    assert metadata["langfuse_trace_url"] is None
 
 
 class FakeLangfuseClient:

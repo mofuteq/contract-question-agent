@@ -16,6 +16,7 @@ the CLI entry point.
 
 import logging
 import os
+from base64 import b64encode
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
@@ -26,7 +27,9 @@ F = TypeVar("F", bound=Callable[..., Any])
 _CONFIGURED: bool | None = None
 _CLIENT: Any = None
 _CLIENT_INIT_FAILED = False
+_MAF_OTEL_CONFIGURED = False
 DEFAULT_LANGFUSE_ENVIRONMENT = "local"
+DEFAULT_LANGFUSE_BASE_URL = "https://cloud.langfuse.com"
 
 _SENSITIVE_METADATA_KEYS = {
     "api_key",
@@ -74,10 +77,7 @@ def get_client() -> Any:
     try:
         from langfuse import Langfuse  # type: ignore[import-not-found]
 
-        host = os.getenv("LANGFUSE_BASE_URL") or os.getenv(
-            "LANGFUSE_HOST",
-            "https://cloud.langfuse.com",
-        )
+        host = _get_langfuse_base_url()
         _CLIENT = Langfuse(
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
@@ -90,6 +90,33 @@ def get_client() -> Any:
         _CLIENT_INIT_FAILED = True
         logger.warning("Langfuse initialization failed: %s", err)
         return None
+
+
+def configure_maf_otel_if_enabled() -> None:
+    """Configure Microsoft Agent Framework OpenTelemetry for Langfuse.
+
+    This best-effort path can capture framework/provider GenAI spans when the
+    MAF client emits them. It never enables sensitive data capture.
+    """
+    global _MAF_OTEL_CONFIGURED
+    if _MAF_OTEL_CONFIGURED or not is_configured():
+        return
+
+    try:
+        _configure_langfuse_otel_env()
+        from agent_framework.observability import (  # type: ignore[import-not-found]
+            configure_otel_providers,
+            enable_instrumentation,
+        )
+
+        configure_otel_providers(
+            enable_sensitive_data=False,
+            enable_console_exporters=False,
+        )
+        enable_instrumentation(enable_sensitive_data=False)
+        _MAF_OTEL_CONFIGURED = True
+    except Exception as err:
+        logger.warning("MAF OpenTelemetry setup failed: %s", err)
 
 
 def _get_context() -> Any:
@@ -197,6 +224,7 @@ def flush() -> None:
 
 __all__ = [
     "flush",
+    "configure_maf_otel_if_enabled",
     "get_client",
     "get_current_trace_id",
     "get_current_trace_url",
@@ -208,6 +236,35 @@ __all__ = [
     "update_current_generation",
     "update_current_trace",
 ]
+
+
+def _configure_langfuse_otel_env() -> None:
+    public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
+    secret_key = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
+    if not public_key or not secret_key:
+        return
+
+    base_url = _get_langfuse_base_url().rstrip("/")
+    os.environ.setdefault(
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        f"{base_url}/api/public/otel/v1/traces",
+    )
+    os.environ.setdefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    os.environ.setdefault("OTEL_SERVICE_NAME", "contract-question-agent")
+    if not os.getenv("OTEL_EXPORTER_OTLP_HEADERS") and not os.getenv(
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS"
+    ):
+        auth = b64encode(f"{public_key}:{secret_key}".encode("utf-8")).decode("ascii")
+        os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = (
+            f"Authorization=Basic {auth},x-langfuse-ingestion-version=4"
+        )
+
+
+def _get_langfuse_base_url() -> str:
+    return os.getenv("LANGFUSE_BASE_URL") or os.getenv(
+        "LANGFUSE_HOST",
+        DEFAULT_LANGFUSE_BASE_URL,
+    )
 
 
 def _safe_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
