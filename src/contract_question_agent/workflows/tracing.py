@@ -173,7 +173,14 @@ def get_langgraph_callbacks(
         )
         if trace_id:
             return [CallbackHandler(trace_context={"trace_id": trace_id})]
-        return [CallbackHandler()]
+        logger.debug(
+            "Langfuse LangGraph callback skipped because no active trace id was found "
+            "session_id=%s trace_name=%s tags=%s",
+            session_id,
+            trace_name,
+            tags,
+        )
+        return []
     except Exception as err:
         logger.warning("Langfuse LangGraph callback initialization failed: %s", err)
         logger.debug(
@@ -193,10 +200,6 @@ def state_transition(
     next_node: str | None = None,
 ) -> Any:
     """Trace one business-node state transition in the LangGraph workflow."""
-    if is_langgraph_callback_enabled():
-        yield _noop_record_output
-        return
-
     transition = {
         "node": node_name,
         "input_state": _state_name(input_state),
@@ -214,10 +217,6 @@ def state_transition(
             )
 
         yield _record_output
-
-
-def _noop_record_output(output_state: Any) -> None:
-    return None
 
 
 def summarize_state(state: Any) -> dict[str, Any]:

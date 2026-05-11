@@ -79,26 +79,6 @@ async def run_workflow_async(
         trace_name=trace_name,
         tags=trace_tags,
     ):
-        langgraph_callbacks = tracing.get_langgraph_callbacks(
-            session_id=session_id,
-            trace_name=trace_name,
-            tags=trace_tags,
-        )
-        if langgraph_callbacks:
-            result = await graph.ainvoke(
-                {"value": request},
-                config=_graph_config(
-                    request,
-                    session_id=session_id,
-                    trace_name=trace_name,
-                    tags=trace_tags,
-                    callbacks=langgraph_callbacks,
-                ),
-            )
-            output = _validate_workflow_output(result)
-            tracing.flush()
-            return output
-
         with tracing.span(
             trace_name,
             input=_request_summary(request),
@@ -108,6 +88,11 @@ async def run_workflow_async(
                 "dry_run": request.dry_run,
             },
         ):
+            langgraph_callbacks = tracing.get_langgraph_callbacks(
+                session_id=session_id,
+                trace_name=trace_name,
+                tags=trace_tags,
+            )
             result = await graph.ainvoke(
                 {"value": request},
                 config=_graph_config(
@@ -115,6 +100,7 @@ async def run_workflow_async(
                     session_id=session_id,
                     trace_name=trace_name,
                     tags=trace_tags,
+                    callbacks=langgraph_callbacks,
                 ),
             )
             output = _validate_workflow_output(result)
@@ -253,8 +239,8 @@ def _graph_config(
     }
     if callbacks:
         # Manual spans remain the canonical business trace. The LangGraph
-        # callback owns workflow-level tracing only in explicit callback mode
-        # so Langfuse can render the Agent Graph without duplicate trees.
+        # callback is created inside the active root span and shares its trace
+        # id, so Langfuse can render the Agent Graph in the same tree.
         config["callbacks"] = callbacks
     return config
 
