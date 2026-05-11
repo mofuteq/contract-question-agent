@@ -33,7 +33,7 @@ dev = ["pytest>=7"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-contract_question_agent = ["prompts/*.jinja"]
+contract_question_agent = ["prompts/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

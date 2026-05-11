@@ -21,7 +21,7 @@ from contract_question_agent.workflows import tracing
 
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-SYSTEM_PROMPT_TEMPLATE = "verification_question_system.jinja"
+SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
 
 
 _PROMPT_ENV = Environment(
