@@ -283,8 +283,9 @@ to sign or not sign.
 - **v0.1 — data layer**: done.
 - **v0.2 — minimal end-to-end workflow**: done.
 - **v0.3 — LangGraph orchestration + optional Langfuse tracing**: in progress.
+- **v0.4 — lightweight MCP clause review hints**: next.
 - **Later**: failure-driven decomposition, evaluation metrics, optional
-  web search, lightweight MCP clause review hints, domain skill expansion.
+  web search, domain skill expansion.
 
 ## Scope and disclaimers
 
