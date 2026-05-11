@@ -41,6 +41,7 @@ FILTER_RECORDS = "FILTER_RECORDS"
 GENERATE_MINIMAL_QUESTIONS = "GENERATE_MINIMAL_QUESTIONS"
 SAFETY_CHECK = "SAFETY_CHECK"
 WRITE_OUTPUT = "WRITE_OUTPUT"
+LANGGRAPH_WORKFLOW_RUN_NAME = "verification-question-workflow"
 
 
 class WorkflowGraphState(TypedDict):
@@ -242,6 +243,7 @@ def _graph_config(
     callbacks: list[object] | None = None,
 ) -> dict[str, object]:
     trace_tags = tags or ["contract-question-agent", "v0.3"]
+    graph_run_name = LANGGRAPH_WORKFLOW_RUN_NAME if callbacks else trace_name
     config: dict[str, object] = {
         "configurable": {
             "thread_id": session_id,
@@ -255,7 +257,7 @@ def _graph_config(
             "langfuse_tags": trace_tags,
             "run_id": request.run_id,
         },
-        "run_name": trace_name,
+        "run_name": graph_run_name,
         "tags": trace_tags,
     }
     if callbacks:

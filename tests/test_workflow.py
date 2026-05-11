@@ -522,6 +522,11 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
 
     def fake_get_langgraph_callbacks(**kwargs):
         assert active_spans == ["contract-question-agent-v0.3"]
+        assert kwargs == {
+            "session_id": "workflow-callback-test",
+            "trace_name": "contract-question-agent-v0.3",
+            "tags": ["contract-question-agent", "v0.3"],
+        }
         return [callback]
 
     monkeypatch.setattr(workflow, "build_workflow", lambda *, model_client: FakeGraph())
@@ -551,7 +556,7 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
             "langfuse_tags": ["contract-question-agent", "v0.3"],
             "run_id": "workflow-callback-test",
         },
-        "run_name": "contract-question-agent-v0.3",
+        "run_name": "verification-question-workflow",
         "tags": ["contract-question-agent", "v0.3"],
         "callbacks": [callback],
     }
