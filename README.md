@@ -1,8 +1,12 @@
 # contract-question-agent
 
+![Tests](https://github.com/mofuteq/contract-question-agent/actions/workflows/test.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+
 A small open-source project that frames **contract review as an information
-asymmetry problem** and (eventually) generates **verification questions**
-that a human reviewer can raise about a commercial contract.
+asymmetry problem** and generates **verification questions** that a human
+reviewer can raise about a commercial contract.
 
 The drafter of a contract typically understands its terms, edge cases, and
 business implications far better than the counter-party reviewing it. The
@@ -15,9 +19,9 @@ This project is therefore explicitly:
 - **Not** a legal-advice tool.
 - **Not** a system that decides whether a contract is acceptable.
 
-Any verification question that future versions generate is a **prompt for
-further investigation** and **must be discussed with a qualified legal
-professional** before being relied upon.
+Any generated verification question is a **prompt for further investigation**
+and **must be discussed with a qualified legal professional** before being
+relied upon.
 
 ## Design rationale
 
@@ -60,12 +64,31 @@ project's first evaluation milestone.
 
 **v0.2 adds a deliberately minimal end-to-end path** from CUAD
 `clause_spans.jsonl` to structured `verification_questions.jsonl`. The v0.2
-workflow is currently implemented with Microsoft Agent Framework, while
-business logic is kept in framework-independent nodes. It uses an
-OpenAI-compatible Agent for OpenRouter generation, deterministic CLI
-filtering, one minimal model call per clause span, Pydantic validation, and a
-rule-based banned-phrase safety check. It is meant to reveal failure patterns,
-not to produce high-quality legal review output.
+path uses deterministic CLI filtering, one minimal model call per clause span,
+Pydantic validation, and a rule-based banned-phrase safety check. It is meant
+to reveal failure patterns, not to produce high-quality legal review output.
+
+**v0.3 updates the architecture positioning**: LangGraph owns workflow
+orchestration and state transitions, MAF/OpenRouter remains the node-internal
+LLM calling path for structured output, and business node logic stays
+framework-independent. Optional Langfuse tracing provides a unified trace
+tree, Agent Graph, business-node spans, and nested generation usage.
+
+## Architecture and observability
+
+```text
+LangGraph:
+  workflow orchestration / state transitions
+
+MAF + OpenRouter:
+  node-internal LLM calling / structured output
+
+Langfuse:
+  unified trace tree / Agent Graph / business-node spans / generation usage
+
+CI:
+  GitHub Actions on debian:stable-slim with uv-managed Python 3.13.13
+```
 
 ## Layout
 
@@ -79,10 +102,11 @@ src/contract_question_agent/
   cuad_downloader.py  # optional downloader
   cuad_loader.py      # parser + JSONL writer
   cli_generate_questions.py
-  model_client/
+  model_client/        # MAF-backed OpenRouter LLM calling path
   workflows/
-    workflow.py       # Microsoft Agent Framework adapter / graph wiring
-    nodes/            # framework-independent state transitions
+    workflow.py        # LangGraph orchestration / state transitions
+    tracing.py         # optional Langfuse tracing helpers
+    nodes/             # framework-independent business node transitions
 tests/
   test_cuad_downloader.py
   test_cuad_loader.py
@@ -117,7 +141,7 @@ uv run cuad-loader \
   --input data/cuad/raw/CUAD_v1.json \
   --output-dir data/cuad/processed
 
-# 3. Run the v0.2 minimal E2E generator without network access.
+# 3. Run the minimal E2E generator without network access.
 uv run contract-question-generate \
   --input data/cuad/processed/clause_spans.jsonl \
   --clause-type "Non-Compete" \
@@ -138,9 +162,9 @@ zip archive) on disk, place it under `data/cuad/raw/` and skip step 1.
 
 See [docs/data.md](docs/data.md) for licensing and attribution requirements.
 
-## v0.2 minimal E2E generation
+## Minimal E2E generation
 
-The generator is intentionally a linear workflow:
+The generator is intentionally a linear LangGraph workflow:
 
 ```
 LOAD_CLAUSE_SPANS
@@ -148,7 +172,6 @@ LOAD_CLAUSE_SPANS
 -> GENERATE_MINIMAL_QUESTIONS
 -> SAFETY_CHECK
 -> WRITE_OUTPUT
--> DONE
 ```
 
 Filtering is deterministic and uses only CLI arguments:
@@ -217,9 +240,9 @@ call the network.
 
 The workflow calls `model_client.generate()` once per filtered clause span. If
 `--limit 1` produces one output row but OpenRouter or provider logs show two
-upstream requests, the duplicate request is likely inside the Microsoft Agent
-Framework Agent structured-output path or provider-side handling, not the v0.2
-workflow wiring.
+upstream requests, the duplicate request is likely inside the node-internal
+MAF/OpenRouter structured-output path or provider-side handling, not LangGraph
+workflow orchestration.
 
 ## Example output
 
@@ -259,10 +282,9 @@ to sign or not sign.
 
 - **v0.1 — data layer**: done.
 - **v0.2 — minimal end-to-end workflow**: done.
-- **v0.3 — optional Langfuse node-level tracing + lightweight MCP clause
-  review hints**: in progress.
+- **v0.3 — LangGraph orchestration + optional Langfuse tracing**: in progress.
 - **Later**: failure-driven decomposition, evaluation metrics, optional
-  web search, domain skill expansion.
+  web search, lightweight MCP clause review hints, domain skill expansion.
 
 ## Scope and disclaimers
 
