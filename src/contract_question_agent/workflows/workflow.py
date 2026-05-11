@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from typing import TypedDict, cast
+from typing import Optional, TypedDict, cast
 
 from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+from langchain_core.runnables import RunnableConfig
 
 warnings.filterwarnings(
     "ignore",
@@ -113,36 +114,48 @@ def build_workflow(*, model_client: QuestionModelClient):
     """Build a deterministic LangGraph with business-readable node names."""
     graph = StateGraph(WorkflowGraphState)
 
-    async def load_node(state: WorkflowGraphState) -> WorkflowGraphState:
+    async def load_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
         request = cast(GenerateQuestionsRequest, state["value"])
         with tracing.state_transition(
             LOAD_CLAUSE_SPANS,
             input_state=request,
             next_node=FILTER_RECORDS,
+            config=config,
         ) as record_output:
             loaded = nodes.load_clause_spans_node(request)
             logger.info("rows_read=%s", loaded.rows_read)
             record_output(loaded)
             return {"value": loaded}
 
-    async def filter_node(state: WorkflowGraphState) -> WorkflowGraphState:
+    async def filter_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
         loaded = cast(LoadedClauseSpans, state["value"])
         with tracing.state_transition(
             FILTER_RECORDS,
             input_state=loaded,
             next_node=GENERATE_MINIMAL_QUESTIONS,
+            config=config,
         ) as record_output:
             filtered = nodes.filter_records_node(loaded)
             logger.info("rows_filtered=%s", filtered.rows_filtered)
             record_output(filtered)
             return {"value": filtered}
 
-    async def generate_node(state: WorkflowGraphState) -> WorkflowGraphState:
+    async def generate_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
         filtered = cast(FilteredClauseSpans, state["value"])
         with tracing.state_transition(
             GENERATE_MINIMAL_QUESTIONS,
             input_state=filtered,
             next_node=SAFETY_CHECK,
+            config=config,
         ) as record_output:
             generated = await nodes.generate_minimal_questions_node(
                 filtered,
@@ -152,24 +165,32 @@ def build_workflow(*, model_client: QuestionModelClient):
             record_output(generated)
             return {"value": generated}
 
-    async def safety_node(state: WorkflowGraphState) -> WorkflowGraphState:
+    async def safety_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
         generated = cast(GeneratedQuestions, state["value"])
         with tracing.state_transition(
             SAFETY_CHECK,
             input_state=generated,
             next_node=WRITE_OUTPUT,
+            config=config,
         ) as record_output:
             checked = nodes.safety_check_node(generated)
             logger.info("safety_failed_count=%s", checked.safety_failed_count)
             record_output(checked)
             return {"value": checked}
 
-    async def write_node(state: WorkflowGraphState) -> WorkflowGraphState:
+    async def write_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
         checked = cast(SafetyCheckedQuestions, state["value"])
         with tracing.state_transition(
             WRITE_OUTPUT,
             input_state=checked,
             next_node="END",
+            config=config,
         ) as record_output:
             written = nodes.write_output_node(checked)
             logger.info("rows_written=%s", written.rows_written)

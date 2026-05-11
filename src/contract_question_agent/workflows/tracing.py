@@ -95,6 +95,7 @@ def span(
     input: Any | None = None,
     metadata: Any | None = None,
     as_type: str = "span",
+    trace_context: dict[str, str] | None = None,
 ) -> Any:
     """Return a Langfuse observation context manager, or a no-op context."""
     client = get_client()
@@ -102,6 +103,7 @@ def span(
         return nullcontext()
     try:
         return client.start_as_current_observation(
+            trace_context=trace_context,
             name=name,
             as_type=as_type,
             input=input,
@@ -142,6 +144,30 @@ def normalize_session_id(value: str) -> str:
     return normalized[:200]
 
 
+def get_current_trace_id() -> str | None:
+    """Return the active Langfuse trace id when available."""
+    client = get_client()
+    if client is None or not hasattr(client, "get_current_trace_id"):
+        return None
+    try:
+        return client.get_current_trace_id()
+    except Exception as err:
+        logger.debug("Langfuse current trace id lookup failed: %s", err)
+        return None
+
+
+def get_current_observation_id() -> str | None:
+    """Return the active Langfuse observation id when available."""
+    client = get_client()
+    if client is None or not hasattr(client, "get_current_observation_id"):
+        return None
+    try:
+        return client.get_current_observation_id()
+    except Exception as err:
+        logger.debug("Langfuse current observation id lookup failed: %s", err)
+        return None
+
+
 def get_langgraph_callbacks(
     *,
     session_id: str,
@@ -154,14 +180,13 @@ def get_langgraph_callbacks(
     try:
         from langfuse.langchain import CallbackHandler  # type: ignore[import-not-found]
 
-        client = get_client()
-        trace_id = (
-            client.get_current_trace_id()
-            if client is not None and hasattr(client, "get_current_trace_id")
-            else None
-        )
+        trace_id = get_current_trace_id()
         if trace_id:
-            return [CallbackHandler(trace_context={"trace_id": trace_id})]
+            trace_context = {"trace_id": trace_id}
+            observation_id = get_current_observation_id()
+            if observation_id:
+                trace_context["parent_span_id"] = observation_id
+            return [CallbackHandler(trace_context=trace_context)]
         logger.debug(
             "Langfuse LangGraph callback skipped because no active trace id was found "
             "session_id=%s trace_name=%s tags=%s",
@@ -187,6 +212,7 @@ def state_transition(
     *,
     input_state: Any,
     next_node: str | None = None,
+    config: Any | None = None,
 ) -> Any:
     """Trace one business-node state transition in the LangGraph workflow."""
     transition = {
@@ -194,10 +220,12 @@ def state_transition(
         "input_state": _state_name(input_state),
         "next_node": next_node,
     }
+    trace_context = _langgraph_node_trace_context(config)
     with span(
         node_name,
         input=summarize_state(input_state),
         metadata=transition,
+        trace_context=trace_context,
     ):
         def _record_output(output_state: Any) -> None:
             update_current_span(
@@ -206,6 +234,44 @@ def state_transition(
             )
 
         yield _record_output
+
+
+def _langgraph_node_trace_context(config: Any | None) -> dict[str, str] | None:
+    """Return the active LangGraph node observation as Langfuse trace context.
+
+    The LangGraph CallbackHandler creates node CHAIN observations before the node
+    function runs. LangGraph passes the active callback manager into node config;
+    its parent_run_id is the current node run id. When available, use the matching
+    Langfuse observation as the explicit parent for manual business-node spans so
+    exports nest as: callback node CHAIN -> manual node SPAN -> generation.
+    """
+    if not isinstance(config, dict):
+        return None
+    callback_manager = config.get("callbacks")
+    parent_run_id = getattr(callback_manager, "parent_run_id", None)
+    if parent_run_id is None:
+        return None
+
+    handlers = list(getattr(callback_manager, "handlers", []) or [])
+    handlers.extend(getattr(callback_manager, "inheritable_handlers", []) or [])
+    seen: set[int] = set()
+    for handler in handlers:
+        handler_id = id(handler)
+        if handler_id in seen:
+            continue
+        seen.add(handler_id)
+        runs = getattr(handler, "_runs", None)
+        if not isinstance(runs, dict) or parent_run_id not in runs:
+            continue
+        observation = runs[parent_run_id]
+        trace_id = getattr(observation, "trace_id", None)
+        observation_id = getattr(observation, "id", None)
+        if isinstance(trace_id, str) and isinstance(observation_id, str):
+            return {
+                "trace_id": trace_id,
+                "parent_span_id": observation_id,
+            }
+    return None
 
 
 def summarize_state(state: Any) -> dict[str, Any]:
@@ -300,6 +366,8 @@ def flush() -> None:
 __all__ = [
     "flush",
     "get_client",
+    "get_current_observation_id",
+    "get_current_trace_id",
     "get_langgraph_callbacks",
     "is_enabled",
     "observe",

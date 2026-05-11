@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from uuid import uuid4
 from types import ModuleType
 from contextlib import contextmanager
 from pathlib import Path
@@ -245,7 +246,14 @@ def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
     sessions: list[dict] = []
 
     @contextmanager
-    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+    def fake_span(
+        name,
+        *,
+        input=None,
+        metadata=None,
+        as_type="span",
+        trace_context=None,
+    ):
         event = {
             "name": name,
             "input": input,
@@ -341,6 +349,9 @@ def test_langgraph_callbacks_use_current_trace_context(monkeypatch):
         def get_current_trace_id(self):
             return "trace-123"
 
+        def get_current_observation_id(self):
+            return "span-456"
+
     langfuse_module = ModuleType("langfuse")
     langfuse_langchain_module = ModuleType("langfuse.langchain")
     langfuse_langchain_module.CallbackHandler = FakeCallbackHandler
@@ -357,7 +368,14 @@ def test_langgraph_callbacks_use_current_trace_context(monkeypatch):
     )
 
     assert len(callbacks) == 1
-    assert callback_calls == [{"trace_context": {"trace_id": "trace-123"}}]
+    assert callback_calls == [
+        {
+            "trace_context": {
+                "trace_id": "trace-123",
+                "parent_span_id": "span-456",
+            }
+        }
+    ]
 
 
 def test_langgraph_callbacks_return_empty_without_active_trace(monkeypatch):
@@ -487,7 +505,14 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
             return {"value": written}
 
     @contextmanager
-    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+    def fake_span(
+        name,
+        *,
+        input=None,
+        metadata=None,
+        as_type="span",
+        trace_context=None,
+    ):
         span_events.append({"name": name, "input": input, "metadata": metadata})
         active_spans.append(name)
         try:
@@ -536,7 +561,14 @@ def test_state_transition_traces(monkeypatch):
     span_events: list[str] = []
 
     @contextmanager
-    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+    def fake_span(
+        name,
+        *,
+        input=None,
+        metadata=None,
+        as_type="span",
+        trace_context=None,
+    ):
         span_events.append(name)
         yield
 
@@ -551,3 +583,58 @@ def test_state_transition_traces(monkeypatch):
         record_output(object())
 
     assert span_events == ["LOAD_CLAUSE_SPANS"]
+
+
+def test_state_transition_uses_active_langgraph_node_as_parent(monkeypatch):
+    run_id = uuid4()
+    span_events: list[dict] = []
+
+    class FakeObservation:
+        trace_id = "trace-123"
+        id = "node-chain-456"
+
+    class FakeHandler:
+        _runs = {run_id: FakeObservation()}
+
+    class FakeCallbackManager:
+        parent_run_id = run_id
+        handlers = [FakeHandler()]
+        inheritable_handlers = []
+
+    @contextmanager
+    def fake_span(
+        name,
+        *,
+        input=None,
+        metadata=None,
+        as_type="span",
+        trace_context=None,
+    ):
+        span_events.append(
+            {
+                "name": name,
+                "trace_context": trace_context,
+            }
+        )
+        yield
+
+    monkeypatch.setattr(tracing, "_ENABLED", True)
+    monkeypatch.setattr(tracing, "span", fake_span)
+
+    with tracing.state_transition(
+        "GENERATE_MINIMAL_QUESTIONS",
+        input_state=object(),
+        next_node="SAFETY_CHECK",
+        config={"callbacks": FakeCallbackManager()},
+    ) as record_output:
+        record_output(object())
+
+    assert span_events == [
+        {
+            "name": "GENERATE_MINIMAL_QUESTIONS",
+            "trace_context": {
+                "trace_id": "trace-123",
+                "parent_span_id": "node-chain-456",
+            },
+        }
+    ]
