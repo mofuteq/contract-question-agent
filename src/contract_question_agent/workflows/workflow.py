@@ -1,12 +1,26 @@
-"""Workflow assembly for the v0.2 Microsoft Agent Framework graph."""
+"""LangGraph orchestration for verification-question generation.
+
+LangGraph owns workflow state transitions and business-readable tracing here.
+Node-internal LLM calling remains delegated to the configured model client,
+including the existing MAF-backed OpenRouter client path.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Never
+import warnings
+from typing import Optional, TypedDict, cast
 
-from agent_framework import FunctionExecutor, WorkflowBuilder, WorkflowContext
+from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+from langchain_core.runnables import RunnableConfig
+
+warnings.filterwarnings(
+    "ignore",
+    category=LangChainPendingDeprecationWarning,
+)
+
+from langgraph.graph import END, StateGraph
 
 from contract_question_agent.schemas import (
     FilteredClauseSpans,
@@ -18,8 +32,29 @@ from contract_question_agent.schemas import (
     WrittenQuestions,
 )
 from contract_question_agent.workflows import nodes
+from contract_question_agent.workflows import tracing
 
 logger = logging.getLogger(__name__)
+
+LOAD_CLAUSE_SPANS = "LOAD_CLAUSE_SPANS"
+FILTER_RECORDS = "FILTER_RECORDS"
+GENERATE_MINIMAL_QUESTIONS = "GENERATE_MINIMAL_QUESTIONS"
+SAFETY_CHECK = "SAFETY_CHECK"
+WRITE_OUTPUT = "WRITE_OUTPUT"
+LANGGRAPH_WORKFLOW_RUN_NAME = "verification-question-workflow"
+
+
+class WorkflowGraphState(TypedDict):
+    """LangGraph carrier for the framework-independent workflow state."""
+
+    value: (
+        GenerateQuestionsRequest
+        | LoadedClauseSpans
+        | FilteredClauseSpans
+        | GeneratedQuestions
+        | SafetyCheckedQuestions
+        | WrittenQuestions
+    )
 
 
 def run_workflow(
@@ -27,78 +62,220 @@ def run_workflow(
     *,
     model_client: QuestionModelClient,
 ) -> WrittenQuestions:
-    """Run LOAD -> FILTER -> GENERATE -> SAFETY -> WRITE -> DONE."""
-    workflow = build_workflow(model_client=model_client)
-    result = asyncio.run(workflow.run(request))
-    outputs = result.get_outputs()
-    if len(outputs) != 1 or not isinstance(outputs[0], WrittenQuestions):
-        raise RuntimeError("Microsoft workflow did not produce one DONE output.")
-    return outputs[0]
+    """Run LOAD -> FILTER -> GENERATE -> SAFETY -> WRITE."""
+    return asyncio.run(run_workflow_async(request, model_client=model_client))
+
+
+async def run_workflow_async(
+    request: GenerateQuestionsRequest,
+    *,
+    model_client: QuestionModelClient,
+) -> WrittenQuestions:
+    """Async workflow entrypoint, useful for tests and embedding."""
+    graph = build_workflow(model_client=model_client)
+    session_id = tracing.normalize_session_id(request.run_id)
+    trace_name = "contract-question-agent-v0.3"
+    trace_tags = ["contract-question-agent", "v0.3"]
+    with tracing.session(
+        session_id,
+        trace_name=trace_name,
+        tags=trace_tags,
+    ):
+        with tracing.span(
+            trace_name,
+            input=_request_summary(request),
+            metadata={
+                "run_id": request.run_id,
+                "session_id": session_id,
+                "dry_run": request.dry_run,
+            },
+        ):
+            langgraph_callbacks = tracing.get_langgraph_callbacks(
+                session_id=session_id,
+                trace_name=trace_name,
+                tags=trace_tags,
+            )
+            result = await graph.ainvoke(
+                {"value": request},
+                config=_graph_config(
+                    request,
+                    session_id=session_id,
+                    trace_name=trace_name,
+                    tags=trace_tags,
+                    callbacks=langgraph_callbacks,
+                ),
+            )
+            output = _validate_workflow_output(result)
+            tracing.update_current_span(output=_written_summary(output))
+            tracing.flush()
+            return output
 
 
 def build_workflow(*, model_client: QuestionModelClient):
-    async def load_node(
-        request: GenerateQuestionsRequest,
-        ctx: WorkflowContext[LoadedClauseSpans, Never],
-    ) -> None:
-        state = nodes.load_clause_spans_node(request)
-        logger.info("rows_read=%s", state.rows_read)
-        await ctx.send_message(state)
+    """Build a deterministic LangGraph with business-readable node names."""
+    graph = StateGraph(WorkflowGraphState)
 
-    async def filter_node_func(
-        state: LoadedClauseSpans,
-        ctx: WorkflowContext[FilteredClauseSpans, Never],
-    ) -> None:
-        filtered = nodes.filter_records_node(state)
-        logger.info("rows_filtered=%s", filtered.rows_filtered)
-        await ctx.send_message(filtered)
+    async def load_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        request = cast(GenerateQuestionsRequest, state["value"])
+        with tracing.state_transition(
+            LOAD_CLAUSE_SPANS,
+            input_state=request,
+            next_node=FILTER_RECORDS,
+            config=config,
+        ) as record_output:
+            loaded = nodes.load_clause_spans_node(request)
+            logger.info("rows_read=%s", loaded.rows_read)
+            record_output(loaded)
+            return {"value": loaded}
+
+    async def filter_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        loaded = cast(LoadedClauseSpans, state["value"])
+        with tracing.state_transition(
+            FILTER_RECORDS,
+            input_state=loaded,
+            next_node=GENERATE_MINIMAL_QUESTIONS,
+            config=config,
+        ) as record_output:
+            filtered = nodes.filter_records_node(loaded)
+            logger.info("rows_filtered=%s", filtered.rows_filtered)
+            record_output(filtered)
+            return {"value": filtered}
 
     async def generate_node(
-        state: FilteredClauseSpans,
-        ctx: WorkflowContext[GeneratedQuestions, Never],
-    ) -> None:
-        generated = await nodes.generate_minimal_questions_node(state, model_client)
-        logger.info("rows_generated=%s", generated.rows_generated)
-        await ctx.send_message(generated)
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        filtered = cast(FilteredClauseSpans, state["value"])
+        with tracing.state_transition(
+            GENERATE_MINIMAL_QUESTIONS,
+            input_state=filtered,
+            next_node=SAFETY_CHECK,
+            config=config,
+        ) as record_output:
+            generated = await nodes.generate_minimal_questions_node(
+                filtered,
+                model_client,
+            )
+            logger.info("rows_generated=%s", generated.rows_generated)
+            record_output(generated)
+            return {"value": generated}
 
     async def safety_node(
-        state: GeneratedQuestions,
-        ctx: WorkflowContext[SafetyCheckedQuestions, Never],
-    ) -> None:
-        checked = nodes.safety_check_node(state)
-        logger.info("safety_failed_count=%s", checked.safety_failed_count)
-        await ctx.send_message(checked)
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        generated = cast(GeneratedQuestions, state["value"])
+        with tracing.state_transition(
+            SAFETY_CHECK,
+            input_state=generated,
+            next_node=WRITE_OUTPUT,
+            config=config,
+        ) as record_output:
+            checked = nodes.safety_check_node(generated)
+            logger.info("safety_failed_count=%s", checked.safety_failed_count)
+            record_output(checked)
+            return {"value": checked}
 
     async def write_node(
-        state: SafetyCheckedQuestions,
-        ctx: WorkflowContext[WrittenQuestions, Never],
-    ) -> None:
-        await ctx.send_message(nodes.write_output_node(state))
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        checked = cast(SafetyCheckedQuestions, state["value"])
+        with tracing.state_transition(
+            WRITE_OUTPUT,
+            input_state=checked,
+            next_node="END",
+            config=config,
+        ) as record_output:
+            written = nodes.write_output_node(checked)
+            logger.info("rows_written=%s", written.rows_written)
+            record_output(written)
+            return {"value": written}
 
-    async def done_node(
-        state: WrittenQuestions,
-        ctx: WorkflowContext[Never, WrittenQuestions],
-    ) -> None:
-        await ctx.yield_output(state)
+    graph.add_node(LOAD_CLAUSE_SPANS, load_node)
+    graph.add_node(FILTER_RECORDS, filter_node)
+    graph.add_node(GENERATE_MINIMAL_QUESTIONS, generate_node)
+    graph.add_node(SAFETY_CHECK, safety_node)
+    graph.add_node(WRITE_OUTPUT, write_node)
 
-    load = FunctionExecutor(load_node, id="LOAD_CLAUSE_SPANS")
-    filter_node = FunctionExecutor(filter_node_func, id="FILTER_RECORDS")
-    generate = FunctionExecutor(generate_node, id="GENERATE_MINIMAL_QUESTIONS")
-    safety = FunctionExecutor(safety_node, id="SAFETY_CHECK")
-    write = FunctionExecutor(write_node, id="WRITE_OUTPUT")
-    done = FunctionExecutor(done_node, id="DONE")
+    graph.set_entry_point(LOAD_CLAUSE_SPANS)
+    graph.add_edge(LOAD_CLAUSE_SPANS, FILTER_RECORDS)
+    graph.add_edge(FILTER_RECORDS, GENERATE_MINIMAL_QUESTIONS)
+    graph.add_edge(GENERATE_MINIMAL_QUESTIONS, SAFETY_CHECK)
+    graph.add_edge(SAFETY_CHECK, WRITE_OUTPUT)
+    graph.add_edge(WRITE_OUTPUT, END)
+    return graph.compile()
 
-    return (
-        WorkflowBuilder(
-            start_executor=load,
-            name="contract-question-agent-v0.2-minimal-e2e",
-            description="Linear CUAD clause span to verification question JSONL workflow.",
-            output_executors=[done],
-        )
-        .add_edge(load, filter_node)
-        .add_edge(filter_node, generate)
-        .add_edge(generate, safety)
-        .add_edge(safety, write)
-        .add_edge(write, done)
-        .build()
-    )
+
+def _validate_workflow_output(result: WorkflowGraphState) -> WrittenQuestions:
+    output = result["value"]
+    if not isinstance(output, WrittenQuestions):
+        raise RuntimeError("LangGraph workflow did not produce a WrittenQuestions output.")
+    return output
+
+
+def _request_summary(request: GenerateQuestionsRequest) -> dict[str, object]:
+    return {
+        "run_id": request.run_id,
+        "input_path": str(request.input_path),
+        "output_path": str(request.output_path),
+        "clause_type": request.clause_type,
+        "contract_id": request.contract_id,
+        "limit": request.limit,
+        "offset": request.offset,
+        "model_name": request.model_name,
+        "dry_run": request.dry_run,
+    }
+
+
+def _graph_config(
+    request: GenerateQuestionsRequest,
+    *,
+    session_id: str,
+    trace_name: str = "contract-question-agent-v0.3",
+    tags: list[str] | None = None,
+    callbacks: list[object] | None = None,
+) -> dict[str, object]:
+    trace_tags = tags or ["contract-question-agent", "v0.3"]
+    graph_run_name = LANGGRAPH_WORKFLOW_RUN_NAME if callbacks else trace_name
+    config: dict[str, object] = {
+        "configurable": {
+            "thread_id": session_id,
+            "run_id": request.run_id,
+            "session_id": session_id,
+            "model_name": request.model_name,
+            "dry_run": request.dry_run,
+        },
+        "metadata": {
+            "langfuse_session_id": session_id,
+            "langfuse_tags": trace_tags,
+            "run_id": request.run_id,
+        },
+        "run_name": graph_run_name,
+        "tags": trace_tags,
+    }
+    if callbacks:
+        # Manual spans remain the canonical business trace. The LangGraph
+        # callback is created inside the active root span and shares its trace
+        # id, so Langfuse can render the Agent Graph in the same tree.
+        config["callbacks"] = callbacks
+    return config
+
+
+def _written_summary(written: WrittenQuestions) -> dict[str, object]:
+    return {
+        "output_path": str(written.output_path),
+        "metadata_path": str(written.metadata_path),
+        "log_path": str(written.log_path),
+        "rows_read": written.rows_read,
+        "rows_filtered": written.rows_filtered,
+        "rows_generated": written.rows_generated,
+        "safety_failed_count": written.safety_failed_count,
+        "rows_written": written.rows_written,
+    }

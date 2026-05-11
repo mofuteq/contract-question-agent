@@ -15,6 +15,7 @@ from agent_framework_openai import OpenAIChatClient
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import VerificationQuestionOutput
+from contract_question_agent.workflows import tracing
 
 
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
@@ -58,18 +59,160 @@ class OpenRouterQuestionClient:
 
     async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
         self.call_count += 1
-        response = await self.agent.run(
-            json.dumps(
-                {
-                    "contract_id": record.contract_id,
-                    "clause_type": record.clause_type,
-                    "evidence_text": record.evidence_text,
-                },
-                ensure_ascii=True,
-            ),
-            options={"response_format": VerificationQuestionOutput},
-        )
-        return _coerce_agent_response(response, self.model_name)
+        request_payload = {
+            "contract_id": record.contract_id,
+            "clause_type": record.clause_type,
+            "evidence_text": record.evidence_text,
+        }
+        with tracing.span(
+            "openrouter-verification-question-agent",
+            input=_generation_input_summary(record),
+            metadata={
+                "contract_id": record.contract_id,
+                "clause_type": record.clause_type,
+                "provider": "openrouter",
+                "runtime": "microsoft-agent-framework",
+            },
+            as_type="generation",
+        ):
+            response = await self.agent.run(
+                json.dumps(request_payload, ensure_ascii=True),
+                options={"response_format": VerificationQuestionOutput},
+            )
+            output = _coerce_agent_response(response, self.model_name)
+            update_kwargs: dict[str, Any] = {
+                "model": self.model_name,
+                "output": _generation_output_summary(output),
+            }
+            usage_details = extract_usage_details(response)
+            if usage_details is not None:
+                update_kwargs["usage_details"] = usage_details
+            tracing.update_current_generation(**update_kwargs)
+            return output
+
+
+def extract_usage_details(response: Any) -> dict[str, int] | None:
+    """Extract Langfuse usage details from common MAF/OpenAI response shapes."""
+    return _extract_usage_details(response, seen=set())
+
+
+def _extract_usage_details(response: Any, *, seen: set[int]) -> dict[str, int] | None:
+    if response is None:
+        return None
+    response_id = id(response)
+    if response_id in seen:
+        return None
+    seen.add(response_id)
+
+    direct = _usage_from_mapping(_object_mapping(response))
+    if direct is not None:
+        return direct
+
+    for key in (
+        "usage",
+        "usage_details",
+        "metadata",
+        "additional_properties",
+        "raw_response",
+        "response",
+    ):
+        nested = _get_value(response, key)
+        if nested is None:
+            continue
+        usage_details = _extract_usage_details(nested, seen=seen)
+        if usage_details is not None:
+            return usage_details
+    return None
+
+
+def _usage_from_mapping(mapping: dict[str, Any]) -> dict[str, int] | None:
+    key_sets = (
+        ("prompt_tokens", "completion_tokens", "total_tokens"),
+        ("inputUsage", "outputUsage", "totalUsage"),
+        ("input_tokens", "output_tokens", "total_tokens"),
+        ("input", "output", "total"),
+    )
+    for input_key, output_key, total_key in key_sets:
+        input_tokens = _coerce_token_count(mapping.get(input_key))
+        output_tokens = _coerce_token_count(mapping.get(output_key))
+        total_tokens = _coerce_token_count(mapping.get(total_key))
+        if input_tokens is None and output_tokens is None and total_tokens is None:
+            continue
+        usage_details: dict[str, int] = {}
+        if input_tokens is not None:
+            usage_details["input"] = input_tokens
+        if output_tokens is not None:
+            usage_details["output"] = output_tokens
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+        if total_tokens is not None:
+            usage_details["total"] = total_tokens
+        return usage_details or None
+    return None
+
+
+def _object_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    mapping: dict[str, Any] = {}
+    for key in (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "inputUsage",
+        "outputUsage",
+        "totalUsage",
+        "input_tokens",
+        "output_tokens",
+        "input",
+        "output",
+        "total",
+    ):
+        attr = getattr(value, key, None)
+        if attr is not None:
+            mapping[key] = attr
+    return mapping
+
+
+def _get_value(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _coerce_token_count(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _generation_input_summary(record: ClauseSpanRecord) -> dict[str, Any]:
+    return {
+        "contract_id": record.contract_id,
+        "clause_type": record.clause_type,
+        "evidence_char_count": len(record.evidence_text),
+    }
+
+
+def _generation_output_summary(
+    output: VerificationQuestionOutput,
+) -> dict[str, Any]:
+    return {
+        "contract_id": output.contract_id,
+        "clause_type": output.clause_type,
+        "unknown_count": len(output.unknowns),
+        "decision_risk_count": len(output.decision_risks),
+        "legal_review_question_count": len(output.legal_review_questions),
+        "verification_question_count": len(output.verification_questions),
+        "safety_status": output.safety_status,
+        "model_name": output.model_name,
+    }
 
 
 def _coerce_agent_response(response: Any, model_name: str) -> VerificationQuestionOutput:
