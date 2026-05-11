@@ -25,7 +25,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 _ENABLED: bool | None = None
 _CLIENT: Any = None
-LANGGRAPH_CALLBACK_ENV = "LANGFUSE_LANGGRAPH_CALLBACK_ENABLED"
 
 
 def is_enabled() -> bool:
@@ -143,16 +142,6 @@ def normalize_session_id(value: str) -> str:
     return normalized[:200]
 
 
-def is_langgraph_callback_enabled() -> bool:
-    """Return True when LangGraph callback mode should own workflow tracing."""
-    return is_enabled() and os.getenv(LANGGRAPH_CALLBACK_ENV, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def get_langgraph_callbacks(
     *,
     session_id: str,
@@ -160,7 +149,7 @@ def get_langgraph_callbacks(
     tags: list[str] | None = None,
 ) -> list[Any]:
     """Return optional Langfuse LangGraph callbacks for graph visualization."""
-    if not is_langgraph_callback_enabled():
+    if not is_enabled():
         return []
     try:
         from langfuse.langchain import CallbackHandler  # type: ignore[import-not-found]
@@ -313,7 +302,6 @@ __all__ = [
     "get_client",
     "get_langgraph_callbacks",
     "is_enabled",
-    "is_langgraph_callback_enabled",
     "observe",
     "normalize_session_id",
     "session",

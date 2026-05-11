@@ -316,34 +316,7 @@ def test_langfuse_session_id_is_ascii_and_under_limit():
     assert tracing.normalize_session_id("実行") == "contract-question-agent-run"
 
 
-def test_langgraph_callbacks_can_be_disabled_with_env_flag(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "false")
-    monkeypatch.setattr(tracing, "_ENABLED", True)
-
-    assert (
-        tracing.get_langgraph_callbacks(
-            session_id="run-123",
-            trace_name="contract-question-agent-v0.3",
-        )
-        == []
-    )
-
-
-def test_langgraph_callbacks_are_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", raising=False)
-    monkeypatch.setattr(tracing, "_ENABLED", True)
-
-    assert (
-        tracing.get_langgraph_callbacks(
-            session_id="run-123",
-            trace_name="contract-question-agent-v0.3",
-        )
-        == []
-    )
-
-
 def test_langgraph_callbacks_are_disabled_without_langfuse_credentials(monkeypatch):
-    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.setattr(tracing, "_ENABLED", None)
@@ -372,7 +345,6 @@ def test_langgraph_callbacks_use_current_trace_context(monkeypatch):
     langfuse_langchain_module = ModuleType("langfuse.langchain")
     langfuse_langchain_module.CallbackHandler = FakeCallbackHandler
 
-    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
     monkeypatch.setattr(tracing, "_ENABLED", True)
     monkeypatch.setattr(tracing, "get_client", lambda: FakeClient())
     monkeypatch.setitem(sys.modules, "langfuse", langfuse_module)
@@ -403,7 +375,6 @@ def test_langgraph_callbacks_return_empty_without_active_trace(monkeypatch):
     langfuse_langchain_module = ModuleType("langfuse.langchain")
     langfuse_langchain_module.CallbackHandler = FakeCallbackHandler
 
-    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
     monkeypatch.setattr(tracing, "_ENABLED", True)
     monkeypatch.setattr(tracing, "get_client", lambda: FakeClient())
     monkeypatch.setitem(sys.modules, "langfuse", langfuse_module)
@@ -561,7 +532,7 @@ def test_run_workflow_passes_langgraph_callbacks_when_enabled(
     }
 
 
-def test_state_transition_still_traces_in_callback_mode(monkeypatch):
+def test_state_transition_traces(monkeypatch):
     span_events: list[str] = []
 
     @contextmanager
@@ -569,7 +540,6 @@ def test_state_transition_still_traces_in_callback_mode(monkeypatch):
         span_events.append(name)
         yield
 
-    monkeypatch.setenv("LANGFUSE_LANGGRAPH_CALLBACK_ENABLED", "true")
     monkeypatch.setattr(tracing, "_ENABLED", True)
     monkeypatch.setattr(tracing, "span", fake_span)
 
