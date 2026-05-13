@@ -56,6 +56,21 @@ def _output() -> VerificationQuestionOutput:
     )
 
 
+def _output_with_selected_lens() -> VerificationQuestionOutput:
+    return VerificationQuestionOutput.model_validate(
+        _output().model_dump()
+        | {
+            "selected_review_lenses": [
+                {
+                    "label": "Time period",
+                    "source": "mcp_clause_review_hints",
+                    "reason": "The clause states a one-year restriction.",
+                }
+            ]
+        },
+    )
+
+
 def _hints() -> ClauseReviewHints:
     return ClauseReviewHints(
         clause_type="Non-Compete",
@@ -249,6 +264,7 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
             "output": {
                 "contract_id": "C1",
                 "clause_type": "Non-Compete",
+                "selected_review_lens_count": 0,
                 "unknown_count": 0,
                 "decision_risk_count": 0,
                 "legal_review_question_count": 0,
@@ -342,6 +358,8 @@ def test_openrouter_client_looks_up_mcp_hints_when_flag_true(monkeypatch):
     assert "Clause review hint candidates were retrieved from a tool." in instructions
     assert "Select only hints that are relevant to the given clause text." in instructions
     assert "Ignore hints that are not supported by or useful for the clause." in instructions
+    assert "Populate selected_review_lenses before generating verification questions." in instructions
+    assert "source='mcp_clause_review_hints'" in instructions
     assert "Review scope, duration, and exceptions as practical lenses." in instructions
 
 
@@ -360,6 +378,10 @@ def test_system_prompt_renders_candidate_hints_when_found():
     assert "Use them as candidate lenses, not conclusions." in prompt
     assert "Select only hints that are relevant to the given clause text." in prompt
     assert "Ignore hints that are not supported by or useful for the clause." in prompt
+    assert "Report the selected lenses in selected_review_lenses." in prompt
+    assert "source='mcp_clause_review_hints'" in prompt
+    assert "Keep selected lens reasons short and grounded in the clause text." in prompt
+    assert "Do not treat selected lenses as legal conclusions." in prompt
     assert "Risk lens:" in prompt
     assert "Review scope, duration, and exceptions as practical lenses." in prompt
     assert "Common unknowns:" in prompt
@@ -413,6 +435,21 @@ def test_openrouter_client_traces_mcp_lookup_metadata_without_evidence(monkeypat
     assert "evidence_text" not in json.dumps(
         {"spans": span_events, "updates": generation_updates}
     )
+
+
+def test_openrouter_client_accepts_selected_review_lenses_from_agent_response():
+    agent = FakeAgent(SimpleNamespace(value=_output_with_selected_lens(), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    output = asyncio.run(client.generate(_span()))
+
+    assert len(output.selected_review_lenses) == 1
+    assert output.selected_review_lenses[0].label == "Time period"
+    assert output.selected_review_lenses[0].source == "mcp_clause_review_hints"
 
 
 def test_extract_usage_details_maps_openai_style_usage():

@@ -366,6 +366,7 @@ def _generation_output_summary(
     return {
         "contract_id": output.contract_id,
         "clause_type": output.clause_type,
+        "selected_review_lens_count": len(output.selected_review_lenses),
         "unknown_count": len(output.unknowns),
         "decision_risk_count": len(output.decision_risks),
         "legal_review_question_count": len(output.legal_review_questions),

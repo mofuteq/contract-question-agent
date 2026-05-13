@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from contract_question_agent.schemas import (
     LegalReviewQuestion,
+    SelectedReviewLens,
     VerificationQuestion,
     VerificationQuestionOutput,
 )
@@ -34,6 +35,34 @@ def test_verification_question_output_validates_minimal_shape():
     )
 
     assert output.contract_id == "C1"
+    assert output.selected_review_lenses == []
+
+
+def test_verification_question_output_accepts_selected_review_lenses():
+    output = VerificationQuestionOutput(
+        contract_id="C1",
+        clause_type="Non-Compete",
+        evidence_text="Employee will not compete for one year.",
+        selected_review_lenses=[
+            SelectedReviewLens(
+                label="Time period",
+                source="mcp_clause_review_hints",
+                reason="The clause states a one-year restriction.",
+            )
+        ],
+        unknowns=[],
+        decision_risks=[],
+        legal_review_questions=[],
+        verification_questions=[],
+        suggested_next_step="Discuss with a qualified professional.",
+        safety_disclaimer="disclaimer",
+        safety_status="passed",
+        safety_warnings=[],
+        model_name="fake-model",
+    )
+
+    assert output.selected_review_lenses[0].label == "Time period"
+    assert output.selected_review_lenses[0].source == "mcp_clause_review_hints"
 
 
 def test_verification_question_output_rejects_extra_fields():
