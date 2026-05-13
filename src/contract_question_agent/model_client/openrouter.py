@@ -9,7 +9,7 @@ from typing import Any
 
 warnings.filterwarnings("ignore", message=r".*is experimental.*")
 
-from agent_framework import Agent
+from agent_framework import Agent, MCPStdioTool
 from agent_framework_openai import OpenAIChatClient
 from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
 
@@ -22,6 +22,14 @@ from contract_question_agent.workflows import tracing
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
+USE_MCP_HINTS_ENV = "CONTRACT_QUESTION_USE_MCP_HINTS"
+MCP_HINTS_TOOL_NAME = "contract-question-agent-clause-hints"
+MCP_HINTS_SERVER_ARGS = [
+    "run",
+    "python",
+    "-m",
+    "contract_question_agent.mcp.server",
+]
 
 
 _PROMPT_ENV = Environment(
@@ -45,6 +53,7 @@ class OpenRouterQuestionClient:
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+        self.use_mcp_hints = _env_flag_enabled(os.getenv(USE_MCP_HINTS_ENV))
         self.call_count = 0
         if not self.api_key:
             raise ValueError(
@@ -67,20 +76,30 @@ class OpenRouterQuestionClient:
             "clause_type": record.clause_type,
             "evidence_text": record.evidence_text,
         }
+        mcp_hints_tool = _build_mcp_hints_tool() if self.use_mcp_hints else None
+        span_metadata: dict[str, Any] = {
+            "contract_id": record.contract_id,
+            "clause_type": record.clause_type,
+            "provider": "openrouter",
+            "runtime": "microsoft-agent-framework",
+            "mcp_hints_enabled": self.use_mcp_hints,
+        }
+        if mcp_hints_tool is not None:
+            span_metadata["mcp_tool_name"] = MCP_HINTS_TOOL_NAME
         with tracing.span(
             "openrouter-verification-question-agent",
             input=_generation_input_summary(record),
-            metadata={
-                "contract_id": record.contract_id,
-                "clause_type": record.clause_type,
-                "provider": "openrouter",
-                "runtime": "microsoft-agent-framework",
-            },
+            metadata=span_metadata,
             as_type="generation",
         ):
+            run_kwargs: dict[str, Any] = {
+                "options": {"response_format": VerificationQuestionOutput},
+            }
+            if mcp_hints_tool is not None:
+                run_kwargs["tools"] = mcp_hints_tool
             response = await self.agent.run(
                 json.dumps(request_payload, ensure_ascii=True),
-                options={"response_format": VerificationQuestionOutput},
+                **run_kwargs,
             )
             output = _coerce_agent_response(response, self.model_name)
             update_kwargs: dict[str, Any] = {
@@ -92,6 +111,19 @@ class OpenRouterQuestionClient:
                 update_kwargs["usage_details"] = usage_details
             tracing.update_current_generation(**update_kwargs)
             return output
+
+
+def _env_flag_enabled(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_mcp_hints_tool() -> MCPStdioTool:
+    return MCPStdioTool(
+        MCP_HINTS_TOOL_NAME,
+        command="uv",
+        args=MCP_HINTS_SERVER_ARGS,
+        allowed_tools=["lookup_clause_review_hints"],
+    )
 
 
 def extract_usage_details(response: Any) -> dict[str, int] | None:

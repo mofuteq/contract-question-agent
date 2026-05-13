@@ -1,0 +1,1 @@
+"""Standalone MCP server package."""
