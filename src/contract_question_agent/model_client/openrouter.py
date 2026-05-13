@@ -5,14 +5,19 @@ from __future__ import annotations
 import json
 import os
 import warnings
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 warnings.filterwarnings("ignore", message=r".*is experimental.*")
 
-from agent_framework import Agent, MCPStdioTool
+from agent_framework import Agent
 from agent_framework_openai import OpenAIChatClient
 from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
+from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import VerificationQuestionOutput
@@ -23,7 +28,7 @@ DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
 USE_MCP_HINTS_ENV = "CONTRACT_QUESTION_USE_MCP_HINTS"
-MCP_HINTS_TOOL_NAME = "contract-question-agent-clause-hints"
+MCP_HINTS_TOOL_NAME = "lookup_clause_review_hints"
 MCP_HINTS_SERVER_ARGS = [
     "run",
     "python",
@@ -38,7 +43,16 @@ _PROMPT_ENV = Environment(
     undefined=StrictUndefined,
     keep_trailing_newline=True,
 )
-SYSTEM_PROMPT = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE).render().strip()
+_SYSTEM_PROMPT_TEMPLATE = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE)
+SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.render(clause_review_hints=None).strip()
+
+
+@dataclass(frozen=True)
+class MCPHintsLookupResult:
+    attempted: bool = False
+    found: bool = False
+    hints: ClauseReviewHints | None = None
+    error_type: str | None = None
 
 
 class OpenRouterQuestionClient:
@@ -50,10 +64,12 @@ class OpenRouterQuestionClient:
         api_key: str | None = None,
         model_name: str | None = None,
         agent: Agent | None = None,
+        mcp_hints_lookup: Callable[[str], Awaitable[MCPHintsLookupResult]] | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
         self.use_mcp_hints = _env_flag_enabled(os.getenv(USE_MCP_HINTS_ENV))
+        self._mcp_hints_lookup = mcp_hints_lookup or lookup_clause_review_hints_via_mcp
         self.call_count = 0
         if not self.api_key:
             raise ValueError(
@@ -76,16 +92,19 @@ class OpenRouterQuestionClient:
             "clause_type": record.clause_type,
             "evidence_text": record.evidence_text,
         }
-        mcp_hints_tool = _build_mcp_hints_tool() if self.use_mcp_hints else None
+        mcp_hints_result = (
+            await self._mcp_hints_lookup(record.clause_type)
+            if self.use_mcp_hints
+            else MCPHintsLookupResult()
+        )
+        system_prompt = render_system_prompt(mcp_hints_result.hints)
         span_metadata: dict[str, Any] = {
             "contract_id": record.contract_id,
             "clause_type": record.clause_type,
             "provider": "openrouter",
             "runtime": "microsoft-agent-framework",
-            "mcp_hints_enabled": self.use_mcp_hints,
+            **_mcp_hints_metadata(mcp_hints_result, self.use_mcp_hints),
         }
-        if mcp_hints_tool is not None:
-            span_metadata["mcp_tool_name"] = MCP_HINTS_TOOL_NAME
         with tracing.span(
             "openrouter-verification-question-agent",
             input=_generation_input_summary(record),
@@ -93,24 +112,24 @@ class OpenRouterQuestionClient:
             as_type="generation",
         ):
             run_kwargs: dict[str, Any] = {
-                "options": {"response_format": VerificationQuestionOutput},
+                "options": {
+                    "instructions": system_prompt,
+                    "response_format": VerificationQuestionOutput,
+                },
             }
-            if mcp_hints_tool is not None:
-                run_kwargs["tools"] = mcp_hints_tool
             response = await self.agent.run(
                 json.dumps(request_payload, ensure_ascii=True),
                 **run_kwargs,
             )
             output = _coerce_agent_response(response, self.model_name)
-            mcp_tool_calls = extract_mcp_tool_calls(response)
             update_kwargs: dict[str, Any] = {
                 "model": self.model_name,
-                "input": _generation_langfuse_input(record),
+                "input": _generation_langfuse_input(record, system_prompt),
                 "output": _generation_output_summary(output),
                 "metadata": _generation_metadata(
                     record,
                     self.use_mcp_hints,
-                    mcp_tool_calls=mcp_tool_calls,
+                    mcp_hints_result=mcp_hints_result,
                 ),
             }
             usage_details = extract_usage_details(response)
@@ -120,91 +139,54 @@ class OpenRouterQuestionClient:
             return output
 
 
-def extract_mcp_tool_calls(response: Any) -> list[str]:
-    """Return MCP tool names observed in a MAF response, without raw args/results."""
-    calls: list[str] = []
-    _collect_mcp_tool_calls(response, calls=calls, seen=set())
-    return calls
+async def lookup_clause_review_hints_via_mcp(
+    clause_type: str,
+) -> MCPHintsLookupResult:
+    try:
+        params = StdioServerParameters(command="uv", args=MCP_HINTS_SERVER_ARGS)
+        async with stdio_client(params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    MCP_HINTS_TOOL_NAME,
+                    {"clause_type": clause_type},
+                )
+        payload = _mcp_tool_result_payload(result)
+        if not payload.get("found"):
+            return MCPHintsLookupResult(attempted=True, found=False)
+        return MCPHintsLookupResult(
+            attempted=True,
+            found=True,
+            hints=ClauseReviewHints.model_validate(payload),
+        )
+    except Exception as err:
+        return MCPHintsLookupResult(
+            attempted=True,
+            found=False,
+            error_type=err.__class__.__name__,
+        )
 
 
-def _collect_mcp_tool_calls(value: Any, *, calls: list[str], seen: set[int]) -> None:
-    if value is None or isinstance(value, (str, bytes, int, float, bool)):
-        return
-    value_id = id(value)
-    if value_id in seen:
-        return
-    seen.add(value_id)
+def _mcp_tool_result_payload(result: Any) -> dict[str, Any]:
+    structured_content = getattr(result, "structuredContent", None)
+    if isinstance(structured_content, dict):
+        return structured_content
+    structured_content = getattr(result, "structured_content", None)
+    if isinstance(structured_content, dict):
+        return structured_content
 
-    if isinstance(value, dict):
-        _collect_mcp_tool_call_from_mapping(value, calls)
-        for key in (
-            "messages",
-            "contents",
-            "content",
-            "items",
-            "raw_representation",
-            "additional_properties",
-            "metadata",
-        ):
-            _collect_mcp_tool_calls(value.get(key), calls=calls, seen=seen)
-        return
-
-    if isinstance(value, (list, tuple, set)):
-        for item in value:
-            _collect_mcp_tool_calls(item, calls=calls, seen=seen)
-        return
-
-    _collect_mcp_tool_call_from_object(value, calls)
-    for key in (
-        "messages",
-        "contents",
-        "content",
-        "items",
-        "raw_representation",
-        "additional_properties",
-        "metadata",
-    ):
-        _collect_mcp_tool_calls(getattr(value, key, None), calls=calls, seen=seen)
-
-
-def _collect_mcp_tool_call_from_mapping(
-    mapping: dict[str, Any],
-    calls: list[str],
-) -> None:
-    content_type = mapping.get("type")
-    if content_type not in {"mcp_server_tool_call", "function_call"}:
-        return
-    tool_name = mapping.get("tool_name") or mapping.get("name")
-    if isinstance(tool_name, str) and _is_clause_hints_tool_name(tool_name):
-        calls.append(tool_name)
-
-
-def _collect_mcp_tool_call_from_object(value: Any, calls: list[str]) -> None:
-    content_type = getattr(value, "type", None)
-    if content_type not in {"mcp_server_tool_call", "function_call"}:
-        return
-    tool_name = getattr(value, "tool_name", None) or getattr(value, "name", None)
-    if isinstance(tool_name, str) and _is_clause_hints_tool_name(tool_name):
-        calls.append(tool_name)
-
-
-def _is_clause_hints_tool_name(tool_name: str) -> bool:
-    return tool_name == "lookup_clause_review_hints" or tool_name.endswith(
-        "lookup_clause_review_hints"
-    )
+    content = getattr(result, "content", None) or []
+    for item in content:
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+    return {}
 
 
 def _env_flag_enabled(value: str | None) -> bool:
     return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _build_mcp_hints_tool() -> MCPStdioTool:
-    return MCPStdioTool(
-        MCP_HINTS_TOOL_NAME,
-        command="uv",
-        args=MCP_HINTS_SERVER_ARGS,
-        allowed_tools=["lookup_clause_review_hints"],
-    )
 
 
 def extract_usage_details(response: Any) -> dict[str, int] | None:
@@ -316,12 +298,19 @@ def _generation_input_summary(record: ClauseSpanRecord) -> dict[str, Any]:
     }
 
 
-def _generation_langfuse_input(record: ClauseSpanRecord) -> dict[str, Any]:
+def render_system_prompt(hints: ClauseReviewHints | None = None) -> str:
+    return _SYSTEM_PROMPT_TEMPLATE.render(clause_review_hints=hints).strip()
+
+
+def _generation_langfuse_input(
+    record: ClauseSpanRecord,
+    system_prompt: str,
+) -> dict[str, Any]:
     return {
         "messages": [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT,
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -335,23 +324,39 @@ def _generation_metadata(
     record: ClauseSpanRecord,
     mcp_hints_enabled: bool,
     *,
-    mcp_tool_calls: list[str] | None = None,
+    mcp_hints_result: MCPHintsLookupResult | None = None,
 ) -> dict[str, Any]:
-    mcp_tool_calls = mcp_tool_calls or []
-    metadata: dict[str, Any] = {
+    return {
         "contract_id": record.contract_id,
         "clause_type": record.clause_type,
         "provider": "openrouter",
         "runtime": "microsoft-agent-framework",
         "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
-        "mcp_hints_enabled": mcp_hints_enabled,
-        "mcp_tool_call_observed": bool(mcp_tool_calls),
-        "mcp_tool_call_count": len(mcp_tool_calls),
+        **_mcp_hints_metadata(
+            mcp_hints_result or MCPHintsLookupResult(),
+            mcp_hints_enabled,
+        ),
     }
-    if mcp_hints_enabled:
-        metadata["mcp_tool_name"] = MCP_HINTS_TOOL_NAME
-    if mcp_tool_calls:
-        metadata["mcp_tool_calls"] = mcp_tool_calls
+
+
+def _mcp_hints_metadata(
+    result: MCPHintsLookupResult,
+    mcp_hints_enabled: bool,
+) -> dict[str, Any]:
+    hints = result.hints
+    metadata: dict[str, Any] = {
+        "mcp_hints_enabled": mcp_hints_enabled,
+        "mcp_hints_lookup_attempted": result.attempted,
+        "mcp_hints_found": result.found,
+        "mcp_tool_name": MCP_HINTS_TOOL_NAME,
+        "common_unknowns_count": len(hints.common_unknowns) if hints is not None else 0,
+        "question_categories_count": (
+            len(hints.question_categories) if hints is not None else 0
+        ),
+        "review_hints_count": len(hints.review_hints) if hints is not None else 0,
+    }
+    if result.error_type is not None:
+        metadata["mcp_hints_error_type"] = result.error_type
     return metadata
 
 

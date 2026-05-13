@@ -32,13 +32,13 @@ Unknown clause types return `found: false` with empty hint lists.
 
 ## Enable During Generation
 
-MCP hints are off by default. To allow the existing OpenRouter/MAF agent to call the local MCP tool during generation:
+MCP hints are off by default. To retrieve generic hints from the local MCP tool before the existing OpenRouter/MAF generation call:
 
 ```bash
 CONTRACT_QUESTION_USE_MCP_HINTS=true uv run contract-question-generate ...
 ```
 
-MCP access is node-internal tool access for the existing MAF generation call, not workflow orchestration. The LangGraph workflow topology is unchanged.
+MCP access is node-internal retrieval for the existing MAF generation path, not workflow orchestration. The application performs the lookup deterministically when enabled, then passes found hints into the system prompt as candidate review lenses. The model should select only relevant hints and ignore unsupported or irrelevant ones. The LangGraph workflow topology is unchanged.
 
 ## What This Does Not Do Yet
 
