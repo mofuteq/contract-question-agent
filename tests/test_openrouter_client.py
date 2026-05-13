@@ -9,6 +9,7 @@ from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.model_client import openrouter
 from contract_question_agent.model_client.openrouter import (
     OpenRouterQuestionClient,
+    extract_mcp_tool_calls,
     extract_usage_details,
 )
 from contract_question_agent.schemas import VerificationQuestionOutput
@@ -241,6 +242,8 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                 "runtime": "microsoft-agent-framework",
                 "system_prompt_template": "verification_question_system.j2",
                 "mcp_hints_enabled": False,
+                "mcp_tool_call_observed": False,
+                "mcp_tool_call_count": 0,
             },
             "usage_details": {"input": 11, "output": 7, "total": 18},
         }
@@ -248,6 +251,54 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
     trace_payload = json.dumps({"spans": span_events, "updates": generation_updates})
     assert "Employee will not compete" not in trace_payload
     assert "evidence_text" not in trace_payload
+
+
+def test_openrouter_client_traces_observed_mcp_tool_calls(monkeypatch):
+    monkeypatch.setenv(openrouter.USE_MCP_HINTS_ENV, "true")
+
+    class FakeMCPStdioTool:
+        def __init__(self, name, **kwargs):
+            self.name = name
+            self.kwargs = kwargs
+
+    response = SimpleNamespace(
+        value=_output(),
+        text="",
+        messages=[
+            SimpleNamespace(
+                contents=[
+                    SimpleNamespace(
+                        type="mcp_server_tool_call",
+                        tool_name="lookup_clause_review_hints",
+                    )
+                ]
+            )
+        ],
+    )
+    agent = FakeAgent(response)
+    generation_updates: list[dict] = []
+
+    monkeypatch.setattr(openrouter, "MCPStdioTool", FakeMCPStdioTool)
+    monkeypatch.setattr(
+        openrouter.tracing,
+        "update_current_generation",
+        lambda **kwargs: generation_updates.append(kwargs),
+    )
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    asyncio.run(client.generate(_span()))
+
+    metadata = generation_updates[0]["metadata"]
+    assert metadata["mcp_hints_enabled"] is True
+    assert metadata["mcp_tool_name"] == openrouter.MCP_HINTS_TOOL_NAME
+    assert metadata["mcp_tool_call_observed"] is True
+    assert metadata["mcp_tool_call_count"] == 1
+    assert metadata["mcp_tool_calls"] == ["lookup_clause_review_hints"]
+    assert "evidence_text" not in json.dumps(generation_updates)
 
 
 def test_openrouter_client_does_not_use_mcp_when_flag_unset(monkeypatch):
@@ -360,3 +411,36 @@ def test_extract_usage_details_maps_maf_style_usage():
 
 def test_extract_usage_details_returns_none_when_usage_missing():
     assert extract_usage_details(SimpleNamespace(value=_output(), text="")) is None
+
+
+def test_extract_mcp_tool_calls_reads_common_response_shapes():
+    response = SimpleNamespace(
+        messages=[
+            {
+                "contents": [
+                    {
+                        "type": "mcp_server_tool_call",
+                        "tool_name": "lookup_clause_review_hints",
+                        "arguments": {"clause_type": "Non-Compete"},
+                    },
+                    {
+                        "type": "mcp_server_tool_result",
+                        "tool_name": "lookup_clause_review_hints",
+                    },
+                ]
+            },
+            SimpleNamespace(
+                contents=[
+                    SimpleNamespace(
+                        type="function_call",
+                        name="contract-question-agent-clause-hints_lookup_clause_review_hints",
+                    )
+                ]
+            ),
+        ]
+    )
+
+    assert extract_mcp_tool_calls(response) == [
+        "lookup_clause_review_hints",
+        "contract-question-agent-clause-hints_lookup_clause_review_hints",
+    ]

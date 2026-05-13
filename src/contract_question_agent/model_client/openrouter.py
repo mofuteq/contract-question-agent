@@ -102,17 +102,96 @@ class OpenRouterQuestionClient:
                 **run_kwargs,
             )
             output = _coerce_agent_response(response, self.model_name)
+            mcp_tool_calls = extract_mcp_tool_calls(response)
             update_kwargs: dict[str, Any] = {
                 "model": self.model_name,
                 "input": _generation_langfuse_input(record),
                 "output": _generation_output_summary(output),
-                "metadata": _generation_metadata(record, self.use_mcp_hints),
+                "metadata": _generation_metadata(
+                    record,
+                    self.use_mcp_hints,
+                    mcp_tool_calls=mcp_tool_calls,
+                ),
             }
             usage_details = extract_usage_details(response)
             if usage_details is not None:
                 update_kwargs["usage_details"] = usage_details
             tracing.update_current_generation(**update_kwargs)
             return output
+
+
+def extract_mcp_tool_calls(response: Any) -> list[str]:
+    """Return MCP tool names observed in a MAF response, without raw args/results."""
+    calls: list[str] = []
+    _collect_mcp_tool_calls(response, calls=calls, seen=set())
+    return calls
+
+
+def _collect_mcp_tool_calls(value: Any, *, calls: list[str], seen: set[int]) -> None:
+    if value is None or isinstance(value, (str, bytes, int, float, bool)):
+        return
+    value_id = id(value)
+    if value_id in seen:
+        return
+    seen.add(value_id)
+
+    if isinstance(value, dict):
+        _collect_mcp_tool_call_from_mapping(value, calls)
+        for key in (
+            "messages",
+            "contents",
+            "content",
+            "items",
+            "raw_representation",
+            "additional_properties",
+            "metadata",
+        ):
+            _collect_mcp_tool_calls(value.get(key), calls=calls, seen=seen)
+        return
+
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _collect_mcp_tool_calls(item, calls=calls, seen=seen)
+        return
+
+    _collect_mcp_tool_call_from_object(value, calls)
+    for key in (
+        "messages",
+        "contents",
+        "content",
+        "items",
+        "raw_representation",
+        "additional_properties",
+        "metadata",
+    ):
+        _collect_mcp_tool_calls(getattr(value, key, None), calls=calls, seen=seen)
+
+
+def _collect_mcp_tool_call_from_mapping(
+    mapping: dict[str, Any],
+    calls: list[str],
+) -> None:
+    content_type = mapping.get("type")
+    if content_type not in {"mcp_server_tool_call", "function_call"}:
+        return
+    tool_name = mapping.get("tool_name") or mapping.get("name")
+    if isinstance(tool_name, str) and _is_clause_hints_tool_name(tool_name):
+        calls.append(tool_name)
+
+
+def _collect_mcp_tool_call_from_object(value: Any, calls: list[str]) -> None:
+    content_type = getattr(value, "type", None)
+    if content_type not in {"mcp_server_tool_call", "function_call"}:
+        return
+    tool_name = getattr(value, "tool_name", None) or getattr(value, "name", None)
+    if isinstance(tool_name, str) and _is_clause_hints_tool_name(tool_name):
+        calls.append(tool_name)
+
+
+def _is_clause_hints_tool_name(tool_name: str) -> bool:
+    return tool_name == "lookup_clause_review_hints" or tool_name.endswith(
+        "lookup_clause_review_hints"
+    )
 
 
 def _env_flag_enabled(value: str | None) -> bool:
@@ -255,7 +334,10 @@ def _generation_langfuse_input(record: ClauseSpanRecord) -> dict[str, Any]:
 def _generation_metadata(
     record: ClauseSpanRecord,
     mcp_hints_enabled: bool,
+    *,
+    mcp_tool_calls: list[str] | None = None,
 ) -> dict[str, Any]:
+    mcp_tool_calls = mcp_tool_calls or []
     metadata: dict[str, Any] = {
         "contract_id": record.contract_id,
         "clause_type": record.clause_type,
@@ -263,9 +345,13 @@ def _generation_metadata(
         "runtime": "microsoft-agent-framework",
         "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
         "mcp_hints_enabled": mcp_hints_enabled,
+        "mcp_tool_call_observed": bool(mcp_tool_calls),
+        "mcp_tool_call_count": len(mcp_tool_calls),
     }
     if mcp_hints_enabled:
         metadata["mcp_tool_name"] = MCP_HINTS_TOOL_NAME
+    if mcp_tool_calls:
+        metadata["mcp_tool_calls"] = mcp_tool_calls
     return metadata
 
 
