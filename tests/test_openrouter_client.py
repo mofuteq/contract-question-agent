@@ -5,11 +5,14 @@ import json
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.model_client import openrouter
 from contract_question_agent.model_client.openrouter import (
+    MCPHintsLookupResult,
     OpenRouterQuestionClient,
     extract_usage_details,
+    render_system_prompt,
 )
 from contract_question_agent.schemas import VerificationQuestionOutput
 
@@ -19,8 +22,8 @@ class FakeAgent:
         self.response = response
         self.calls = []
 
-    async def run(self, message, *, options):
-        self.calls.append((message, options))
+    async def run(self, message, **kwargs):
+        self.calls.append((message, kwargs))
         return self.response
 
 
@@ -53,6 +56,31 @@ def _output() -> VerificationQuestionOutput:
     )
 
 
+def _output_with_selected_lens() -> VerificationQuestionOutput:
+    return VerificationQuestionOutput.model_validate(
+        _output().model_dump()
+        | {
+            "selected_review_lenses": [
+                {
+                    "label": "Time period",
+                    "source": "mcp_clause_review_hints",
+                    "reason": "The clause states a one-year restriction.",
+                }
+            ]
+        },
+    )
+
+
+def _hints() -> ClauseReviewHints:
+    return ClauseReviewHints(
+        clause_type="Non-Compete",
+        risk_lens="Review scope, duration, and exceptions as practical lenses.",
+        common_unknowns=["Which activities are covered?", "How long does it last?"],
+        question_categories=["Scope", "Timing"],
+        review_hints=["Compare terms against the clause text."],
+    )
+
+
 def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
     agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
     client = OpenRouterQuestionClient(
@@ -66,7 +94,12 @@ def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
     assert output.model_name == "test-model"
     assert client.call_count == 1
     assert output.safety_disclaimer
-    assert agent.calls[0][1] == {"response_format": VerificationQuestionOutput}
+    assert agent.calls[0][1] == {
+        "options": {
+            "instructions": openrouter.SYSTEM_PROMPT,
+            "response_format": VerificationQuestionOutput,
+        }
+    }
     assert json.loads(agent.calls[0][0]) == {
         "contract_id": "C1",
         "clause_type": "Non-Compete",
@@ -198,6 +231,13 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                 "clause_type": "Non-Compete",
                 "provider": "openrouter",
                 "runtime": "microsoft-agent-framework",
+                "mcp_hints_enabled": False,
+                "mcp_hints_lookup_attempted": False,
+                "mcp_hints_found": False,
+                "mcp_tool_name": openrouter.MCP_HINTS_TOOL_NAME,
+                "common_unknowns_count": 0,
+                "question_categories_count": 0,
+                "review_hints_count": 0,
             },
             "as_type": "generation",
         }
@@ -205,9 +245,26 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
     assert generation_updates == [
         {
             "model": "test-model",
+            "input": {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": openrouter.SYSTEM_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": {
+                            "contract_id": "C1",
+                            "clause_type": "Non-Compete",
+                            "evidence_char_count": 26,
+                        },
+                    },
+                ],
+            },
             "output": {
                 "contract_id": "C1",
                 "clause_type": "Non-Compete",
+                "selected_review_lens_count": 0,
                 "unknown_count": 0,
                 "decision_risk_count": 0,
                 "legal_review_question_count": 0,
@@ -215,12 +272,184 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                 "safety_status": "unchecked",
                 "model_name": "test-model",
             },
+            "metadata": {
+                "contract_id": "C1",
+                "clause_type": "Non-Compete",
+                "provider": "openrouter",
+                "runtime": "microsoft-agent-framework",
+                "system_prompt_template": "verification_question_system.j2",
+                "mcp_hints_enabled": False,
+                "mcp_hints_lookup_attempted": False,
+                "mcp_hints_found": False,
+                "mcp_tool_name": openrouter.MCP_HINTS_TOOL_NAME,
+                "common_unknowns_count": 0,
+                "question_categories_count": 0,
+                "review_hints_count": 0,
+            },
             "usage_details": {"input": 11, "output": 7, "total": 18},
         }
     ]
     trace_payload = json.dumps({"spans": span_events, "updates": generation_updates})
     assert "Employee will not compete" not in trace_payload
     assert "evidence_text" not in trace_payload
+
+
+def test_openrouter_client_does_not_use_mcp_when_flag_unset(monkeypatch):
+    monkeypatch.delenv(openrouter.USE_MCP_HINTS_ENV, raising=False)
+
+    async def fail_if_lookup_is_called(clause_type):
+        raise AssertionError("MCP lookup should not run when MCP hints are off.")
+
+    agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+        mcp_hints_lookup=fail_if_lookup_is_called,
+    )
+
+    asyncio.run(client.generate(_span()))
+
+    assert "tools" not in agent.calls[0][1]
+
+
+def test_openrouter_client_does_not_use_mcp_when_flag_false(monkeypatch):
+    monkeypatch.setenv(openrouter.USE_MCP_HINTS_ENV, "false")
+
+    async def fail_if_lookup_is_called(clause_type):
+        raise AssertionError("MCP lookup should not run when MCP hints are false.")
+
+    agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+        mcp_hints_lookup=fail_if_lookup_is_called,
+    )
+
+    asyncio.run(client.generate(_span()))
+
+    assert client.use_mcp_hints is False
+    assert "tools" not in agent.calls[0][1]
+
+
+def test_openrouter_client_looks_up_mcp_hints_when_flag_true(monkeypatch):
+    monkeypatch.setenv(openrouter.USE_MCP_HINTS_ENV, "true")
+    lookup_calls = []
+
+    async def fake_lookup(clause_type):
+        lookup_calls.append(clause_type)
+        return MCPHintsLookupResult(attempted=True, found=True, hints=_hints())
+
+    agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+        mcp_hints_lookup=fake_lookup,
+    )
+
+    asyncio.run(client.generate(_span()))
+
+    assert client.use_mcp_hints is True
+    assert lookup_calls == ["Non-Compete"]
+    assert "tools" not in agent.calls[0][1]
+    instructions = agent.calls[0][1]["options"]["instructions"]
+    assert "Clause review hint candidates were retrieved from a tool." in instructions
+    assert "Select only hints that are relevant to the given clause text." in instructions
+    assert "Ignore hints that are not supported by or useful for the clause." in instructions
+    assert "Populate selected_review_lenses before generating verification questions." in instructions
+    assert "source='mcp_clause_review_hints'" in instructions
+    assert "Review scope, duration, and exceptions as practical lenses." in instructions
+
+
+def test_system_prompt_omits_candidate_hints_when_not_found_or_disabled():
+    assert "Clause review hint candidates were retrieved from a tool." not in openrouter.SYSTEM_PROMPT
+    assert (
+        "Clause review hint candidates were retrieved from a tool."
+        not in render_system_prompt(None)
+    )
+
+
+def test_system_prompt_renders_candidate_hints_when_found():
+    prompt = render_system_prompt(_hints())
+
+    assert "Clause review hint candidates were retrieved from a tool." in prompt
+    assert "Use them as candidate lenses, not conclusions." in prompt
+    assert "Select only hints that are relevant to the given clause text." in prompt
+    assert "Ignore hints that are not supported by or useful for the clause." in prompt
+    assert "Report the selected lenses in selected_review_lenses." in prompt
+    assert "source='mcp_clause_review_hints'" in prompt
+    assert "Keep selected lens reasons short and grounded in the clause text." in prompt
+    assert "Do not treat selected lenses as legal conclusions." in prompt
+    assert "Risk lens:" in prompt
+    assert "Review scope, duration, and exceptions as practical lenses." in prompt
+    assert "Common unknowns:" in prompt
+    assert "Which activities are covered?" in prompt
+    assert "Question categories:" in prompt
+    assert "Scope" in prompt
+    assert "Review hints:" in prompt
+    assert "Compare terms against the clause text." in prompt
+
+
+def test_openrouter_client_traces_mcp_lookup_metadata_without_evidence(monkeypatch):
+    monkeypatch.setenv(openrouter.USE_MCP_HINTS_ENV, "true")
+
+    async def fake_lookup(clause_type):
+        return MCPHintsLookupResult(attempted=True, found=True, hints=_hints())
+
+    agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
+    generation_updates: list[dict] = []
+    span_events: list[dict] = []
+
+    @contextmanager
+    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+        span_events.append({"metadata": metadata})
+        yield
+
+    monkeypatch.setattr(openrouter.tracing, "span", fake_span)
+    monkeypatch.setattr(
+        openrouter.tracing,
+        "update_current_generation",
+        lambda **kwargs: generation_updates.append(kwargs),
+    )
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+        mcp_hints_lookup=fake_lookup,
+    )
+
+    asyncio.run(client.generate(_span()))
+
+    metadata = generation_updates[0]["metadata"]
+    assert span_events[0]["metadata"]["mcp_hints_lookup_attempted"] is True
+    assert metadata["mcp_hints_enabled"] is True
+    assert metadata["mcp_hints_lookup_attempted"] is True
+    assert metadata["mcp_hints_found"] is True
+    assert metadata["mcp_tool_name"] == "lookup_clause_review_hints"
+    assert metadata["clause_type"] == "Non-Compete"
+    assert metadata["common_unknowns_count"] == 2
+    assert metadata["question_categories_count"] == 2
+    assert metadata["review_hints_count"] == 1
+    assert "evidence_text" not in json.dumps(
+        {"spans": span_events, "updates": generation_updates}
+    )
+
+
+def test_openrouter_client_accepts_selected_review_lenses_from_agent_response():
+    agent = FakeAgent(SimpleNamespace(value=_output_with_selected_lens(), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    output = asyncio.run(client.generate(_span()))
+
+    assert len(output.selected_review_lenses) == 1
+    assert output.selected_review_lenses[0].label == "Time period"
+    assert output.selected_review_lenses[0].source == "mcp_clause_review_hints"
 
 
 def test_extract_usage_details_maps_openai_style_usage():

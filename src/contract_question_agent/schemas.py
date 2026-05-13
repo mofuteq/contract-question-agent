@@ -24,10 +24,17 @@ class LegalReviewQuestion(_StrictModel):
     reason: str
 
 
+class SelectedReviewLens(_StrictModel):
+    label: str
+    source: str
+    reason: str
+
+
 class VerificationQuestionOutput(_StrictModel):
     contract_id: str
     clause_type: str
     evidence_text: str
+    selected_review_lenses: list[SelectedReviewLens] = Field(default_factory=list)
     unknowns: list[str]
     decision_risks: list[str]
     legal_review_questions: list[LegalReviewQuestion]

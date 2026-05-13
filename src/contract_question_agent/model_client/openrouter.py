@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import warnings
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 warnings.filterwarnings("ignore", message=r".*is experimental.*")
@@ -12,7 +14,10 @@ warnings.filterwarnings("ignore", message=r".*is experimental.*")
 from agent_framework import Agent
 from agent_framework_openai import OpenAIChatClient
 from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
+from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import VerificationQuestionOutput
@@ -22,6 +27,14 @@ from contract_question_agent.workflows import tracing
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
+USE_MCP_HINTS_ENV = "CONTRACT_QUESTION_USE_MCP_HINTS"
+MCP_HINTS_TOOL_NAME = "lookup_clause_review_hints"
+MCP_HINTS_SERVER_ARGS = [
+    "run",
+    "python",
+    "-m",
+    "contract_question_agent.mcp.server",
+]
 
 
 _PROMPT_ENV = Environment(
@@ -30,7 +43,16 @@ _PROMPT_ENV = Environment(
     undefined=StrictUndefined,
     keep_trailing_newline=True,
 )
-SYSTEM_PROMPT = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE).render().strip()
+_SYSTEM_PROMPT_TEMPLATE = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE)
+SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.render(clause_review_hints=None).strip()
+
+
+@dataclass(frozen=True)
+class MCPHintsLookupResult:
+    attempted: bool = False
+    found: bool = False
+    hints: ClauseReviewHints | None = None
+    error_type: str | None = None
 
 
 class OpenRouterQuestionClient:
@@ -42,9 +64,12 @@ class OpenRouterQuestionClient:
         api_key: str | None = None,
         model_name: str | None = None,
         agent: Agent | None = None,
+        mcp_hints_lookup: Callable[[str], Awaitable[MCPHintsLookupResult]] | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
+        self.use_mcp_hints = _env_flag_enabled(os.getenv(USE_MCP_HINTS_ENV))
+        self._mcp_hints_lookup = mcp_hints_lookup or lookup_clause_review_hints_via_mcp
         self.call_count = 0
         if not self.api_key:
             raise ValueError(
@@ -67,31 +92,101 @@ class OpenRouterQuestionClient:
             "clause_type": record.clause_type,
             "evidence_text": record.evidence_text,
         }
+        mcp_hints_result = (
+            await self._mcp_hints_lookup(record.clause_type)
+            if self.use_mcp_hints
+            else MCPHintsLookupResult()
+        )
+        system_prompt = render_system_prompt(mcp_hints_result.hints)
+        span_metadata: dict[str, Any] = {
+            "contract_id": record.contract_id,
+            "clause_type": record.clause_type,
+            "provider": "openrouter",
+            "runtime": "microsoft-agent-framework",
+            **_mcp_hints_metadata(mcp_hints_result, self.use_mcp_hints),
+        }
         with tracing.span(
             "openrouter-verification-question-agent",
             input=_generation_input_summary(record),
-            metadata={
-                "contract_id": record.contract_id,
-                "clause_type": record.clause_type,
-                "provider": "openrouter",
-                "runtime": "microsoft-agent-framework",
-            },
+            metadata=span_metadata,
             as_type="generation",
         ):
+            run_kwargs: dict[str, Any] = {
+                "options": {
+                    "instructions": system_prompt,
+                    "response_format": VerificationQuestionOutput,
+                },
+            }
             response = await self.agent.run(
                 json.dumps(request_payload, ensure_ascii=True),
-                options={"response_format": VerificationQuestionOutput},
+                **run_kwargs,
             )
             output = _coerce_agent_response(response, self.model_name)
             update_kwargs: dict[str, Any] = {
                 "model": self.model_name,
+                "input": _generation_langfuse_input(record, system_prompt),
                 "output": _generation_output_summary(output),
+                "metadata": _generation_metadata(
+                    record,
+                    self.use_mcp_hints,
+                    mcp_hints_result=mcp_hints_result,
+                ),
             }
             usage_details = extract_usage_details(response)
             if usage_details is not None:
                 update_kwargs["usage_details"] = usage_details
             tracing.update_current_generation(**update_kwargs)
             return output
+
+
+async def lookup_clause_review_hints_via_mcp(
+    clause_type: str,
+) -> MCPHintsLookupResult:
+    try:
+        params = StdioServerParameters(command="uv", args=MCP_HINTS_SERVER_ARGS)
+        async with stdio_client(params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    MCP_HINTS_TOOL_NAME,
+                    {"clause_type": clause_type},
+                )
+        payload = _mcp_tool_result_payload(result)
+        if not payload.get("found"):
+            return MCPHintsLookupResult(attempted=True, found=False)
+        return MCPHintsLookupResult(
+            attempted=True,
+            found=True,
+            hints=ClauseReviewHints.model_validate(payload),
+        )
+    except Exception as err:
+        return MCPHintsLookupResult(
+            attempted=True,
+            found=False,
+            error_type=err.__class__.__name__,
+        )
+
+
+def _mcp_tool_result_payload(result: Any) -> dict[str, Any]:
+    structured_content = getattr(result, "structuredContent", None)
+    if isinstance(structured_content, dict):
+        return structured_content
+    structured_content = getattr(result, "structured_content", None)
+    if isinstance(structured_content, dict):
+        return structured_content
+
+    content = getattr(result, "content", None) or []
+    for item in content:
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+    return {}
+
+
+def _env_flag_enabled(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def extract_usage_details(response: Any) -> dict[str, int] | None:
@@ -203,12 +298,75 @@ def _generation_input_summary(record: ClauseSpanRecord) -> dict[str, Any]:
     }
 
 
+def render_system_prompt(hints: ClauseReviewHints | None = None) -> str:
+    return _SYSTEM_PROMPT_TEMPLATE.render(clause_review_hints=hints).strip()
+
+
+def _generation_langfuse_input(
+    record: ClauseSpanRecord,
+    system_prompt: str,
+) -> dict[str, Any]:
+    return {
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": _generation_input_summary(record),
+            },
+        ],
+    }
+
+
+def _generation_metadata(
+    record: ClauseSpanRecord,
+    mcp_hints_enabled: bool,
+    *,
+    mcp_hints_result: MCPHintsLookupResult | None = None,
+) -> dict[str, Any]:
+    return {
+        "contract_id": record.contract_id,
+        "clause_type": record.clause_type,
+        "provider": "openrouter",
+        "runtime": "microsoft-agent-framework",
+        "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
+        **_mcp_hints_metadata(
+            mcp_hints_result or MCPHintsLookupResult(),
+            mcp_hints_enabled,
+        ),
+    }
+
+
+def _mcp_hints_metadata(
+    result: MCPHintsLookupResult,
+    mcp_hints_enabled: bool,
+) -> dict[str, Any]:
+    hints = result.hints
+    metadata: dict[str, Any] = {
+        "mcp_hints_enabled": mcp_hints_enabled,
+        "mcp_hints_lookup_attempted": result.attempted,
+        "mcp_hints_found": result.found,
+        "mcp_tool_name": MCP_HINTS_TOOL_NAME,
+        "common_unknowns_count": len(hints.common_unknowns) if hints is not None else 0,
+        "question_categories_count": (
+            len(hints.question_categories) if hints is not None else 0
+        ),
+        "review_hints_count": len(hints.review_hints) if hints is not None else 0,
+    }
+    if result.error_type is not None:
+        metadata["mcp_hints_error_type"] = result.error_type
+    return metadata
+
+
 def _generation_output_summary(
     output: VerificationQuestionOutput,
 ) -> dict[str, Any]:
     return {
         "contract_id": output.contract_id,
         "clause_type": output.clause_type,
+        "selected_review_lens_count": len(output.selected_review_lenses),
         "unknown_count": len(output.unknowns),
         "decision_risk_count": len(output.decision_risks),
         "legal_review_question_count": len(output.legal_review_questions),
