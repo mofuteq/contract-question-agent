@@ -14,7 +14,11 @@ from contract_question_agent.model_client.openrouter import (
     extract_usage_details,
     render_system_prompt,
 )
-from contract_question_agent.schemas import VerificationQuestionOutput
+from contract_question_agent.schemas import (
+    LegalReviewQuestion,
+    VerificationQuestion,
+    VerificationQuestionOutput,
+)
 
 
 class FakeAgent:
@@ -108,7 +112,29 @@ def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
 
 
 def test_openrouter_client_parses_raw_json_text():
-    payload = _output().model_copy(update={"model_name": "raw-model"}).model_dump_json()
+    payload = (
+        _output()
+        .model_copy(
+            update={
+                "model_name": "raw-model",
+                "unknowns": ["> Which activities are covered?"],
+                "decision_risks": ["- Scope may affect operations."],
+                "legal_review_questions": [
+                    LegalReviewQuestion(
+                        question="What facts matter?",
+                        reason="* Facts outside the excerpt may matter.",
+                    )
+                ],
+                "verification_questions": [
+                    VerificationQuestion(
+                        question="Which roles are covered?",
+                        why_it_matters="> The clause references covered roles.",
+                    )
+                ],
+            }
+        )
+        .model_dump_json()
+    )
     agent = FakeAgent(SimpleNamespace(value=None, text=payload))
     client = OpenRouterQuestionClient(
         api_key="test-key",
@@ -120,6 +146,14 @@ def test_openrouter_client_parses_raw_json_text():
 
     assert output.contract_id == "C1"
     assert output.model_name == "raw-model"
+    assert output.unknowns == ["Which activities are covered?"]
+    assert output.decision_risks == ["Scope may affect operations."]
+    assert output.legal_review_questions[0].reason == (
+        "Facts outside the excerpt may matter."
+    )
+    assert output.verification_questions[0].why_it_matters == (
+        "The clause references covered roles."
+    )
 
 
 def test_openrouter_client_validates_dict_like_response_value():
@@ -174,6 +208,8 @@ def test_openrouter_client_loads_system_prompt_from_jinja_template(monkeypatch):
     assert client.agent is not None
     assert created_agents[0]["instructions"] == openrouter.SYSTEM_PROMPT
     assert "Generate verification questions for a contract clause" in openrouter.SYSTEM_PROMPT
+    assert "Return plain strings only." in openrouter.SYSTEM_PROMPT
+    assert "Do not prefix list items with Markdown markers" in openrouter.SYSTEM_PROMPT
     assert "Return structured output only." in openrouter.SYSTEM_PROMPT
 
 
@@ -360,6 +396,7 @@ def test_openrouter_client_looks_up_mcp_hints_when_flag_true(monkeypatch):
     assert "Ignore hints that are not supported by or useful for the clause." in instructions
     assert "Populate selected_review_lenses before generating verification questions." in instructions
     assert "source='mcp_clause_review_hints'" in instructions
+    assert "Use concise labels instead of copying entire candidate hint sentences." in instructions
     assert "Review scope, duration, and exceptions as practical lenses." in instructions
 
 
@@ -379,7 +416,9 @@ def test_system_prompt_renders_candidate_hints_when_found():
     assert "Select only hints that are relevant to the given clause text." in prompt
     assert "Ignore hints that are not supported by or useful for the clause." in prompt
     assert "Report the selected lenses in selected_review_lenses." in prompt
+    assert "Each selected lens should include a concise label, source, and short reason." in prompt
     assert "source='mcp_clause_review_hints'" in prompt
+    assert "Use concise labels instead of copying entire candidate hint sentences." in prompt
     assert "Keep selected lens reasons short and grounded in the clause text." in prompt
     assert "Do not treat selected lenses as legal conclusions." in prompt
     assert "Risk lens:" in prompt
@@ -450,6 +489,20 @@ def test_openrouter_client_accepts_selected_review_lenses_from_agent_response():
     assert len(output.selected_review_lenses) == 1
     assert output.selected_review_lenses[0].label == "Time period"
     assert output.selected_review_lenses[0].source == "mcp_clause_review_hints"
+
+
+def test_selected_review_lenses_remain_serialized_in_output_payload():
+    output = _output_with_selected_lens()
+
+    payload = output.model_dump()
+
+    assert payload["selected_review_lenses"] == [
+        {
+            "label": "Time period",
+            "source": "mcp_clause_review_hints",
+            "reason": "The clause states a one-year restriction.",
+        }
+    ]
 
 
 def test_extract_usage_details_maps_openai_style_usage():
