@@ -208,6 +208,22 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
     assert generation_updates == [
         {
             "model": "test-model",
+            "input": {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": openrouter.SYSTEM_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": {
+                            "contract_id": "C1",
+                            "clause_type": "Non-Compete",
+                            "evidence_char_count": 26,
+                        },
+                    },
+                ],
+            },
             "output": {
                 "contract_id": "C1",
                 "clause_type": "Non-Compete",
@@ -217,6 +233,14 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                 "verification_question_count": 0,
                 "safety_status": "unchecked",
                 "model_name": "test-model",
+            },
+            "metadata": {
+                "contract_id": "C1",
+                "clause_type": "Non-Compete",
+                "provider": "openrouter",
+                "runtime": "microsoft-agent-framework",
+                "system_prompt_template": "verification_question_system.j2",
+                "mcp_hints_enabled": False,
             },
             "usage_details": {"input": 11, "output": 7, "total": 18},
         }

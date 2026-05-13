@@ -104,7 +104,9 @@ class OpenRouterQuestionClient:
             output = _coerce_agent_response(response, self.model_name)
             update_kwargs: dict[str, Any] = {
                 "model": self.model_name,
+                "input": _generation_langfuse_input(record),
                 "output": _generation_output_summary(output),
+                "metadata": _generation_metadata(record, self.use_mcp_hints),
             }
             usage_details = extract_usage_details(response)
             if usage_details is not None:
@@ -233,6 +235,38 @@ def _generation_input_summary(record: ClauseSpanRecord) -> dict[str, Any]:
         "clause_type": record.clause_type,
         "evidence_char_count": len(record.evidence_text),
     }
+
+
+def _generation_langfuse_input(record: ClauseSpanRecord) -> dict[str, Any]:
+    return {
+        "messages": [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": _generation_input_summary(record),
+            },
+        ],
+    }
+
+
+def _generation_metadata(
+    record: ClauseSpanRecord,
+    mcp_hints_enabled: bool,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "contract_id": record.contract_id,
+        "clause_type": record.clause_type,
+        "provider": "openrouter",
+        "runtime": "microsoft-agent-framework",
+        "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
+        "mcp_hints_enabled": mcp_hints_enabled,
+    }
+    if mcp_hints_enabled:
+        metadata["mcp_tool_name"] = MCP_HINTS_TOOL_NAME
+    return metadata
 
 
 def _generation_output_summary(
