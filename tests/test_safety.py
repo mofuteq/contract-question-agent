@@ -7,6 +7,7 @@ from contract_question_agent.safety import (
 )
 from contract_question_agent.schemas import (
     LegalReviewQuestion,
+    SelectedReviewLens,
     VerificationQuestion,
     VerificationQuestionOutput,
 )
@@ -96,3 +97,38 @@ def test_plain_string_normalization_strips_leading_markdown_markers():
         normalized.verification_questions[0].why_it_matters,
     ]
     assert all(not item.startswith((">", "-", "*")) for item in plain_strings)
+
+
+def test_plain_string_normalization_nfkc_normalizes_before_marker_cleanup():
+    output = _output("＞ Which activities are covered?")
+    output = output.model_copy(
+        update={
+            "selected_review_lenses": [
+                SelectedReviewLens(
+                    label="＊ ＡＤＡＭＳ",
+                    source="mcp_clause_review_hints",
+                    reason="＞ ＡＤＡＭＳ appears in the clause.",
+                )
+            ],
+            "decision_risks": ["－ Scope may affect operations."],
+            "legal_review_questions": [
+                LegalReviewQuestion(
+                    question="What facts matter?",
+                    reason="＊ Facts outside the excerpt may matter.",
+                )
+            ],
+        }
+    )
+
+    normalized = normalize_plain_string_fields(output)
+
+    assert normalized.unknowns == ["Which activities are covered?"]
+    assert normalized.decision_risks == ["Scope may affect operations."]
+    assert normalized.legal_review_questions[0].reason == (
+        "Facts outside the excerpt may matter."
+    )
+    assert normalized.selected_review_lenses[0].label == "ADAMS"
+    assert normalized.selected_review_lenses[0].reason == (
+        "ADAMS appears in the clause."
+    )
+    assert normalized.selected_review_lenses[0].source == "mcp_clause_review_hints"

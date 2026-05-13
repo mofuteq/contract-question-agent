@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from contract_question_agent.schemas import (
@@ -53,36 +54,32 @@ def apply_safety_check(output: VerificationQuestionOutput) -> VerificationQuesti
 def normalize_plain_string_fields(
     output: VerificationQuestionOutput,
 ) -> VerificationQuestionOutput:
-    """Remove Markdown list/blockquote markers from plain string fields."""
+    """Apply NFKC normalization and remove leading Markdown markers."""
     return output.model_copy(
         update={
             "selected_review_lenses": [
                 SelectedReviewLens(
-                    label=_strip_leading_markdown_marker(item.label),
+                    label=_normalize_plain_string(item.label),
                     source=item.source,
-                    reason=_strip_leading_markdown_marker(item.reason),
+                    reason=_normalize_plain_string(item.reason),
                 )
                 for item in output.selected_review_lenses
             ],
-            "unknowns": [
-                _strip_leading_markdown_marker(item) for item in output.unknowns
-            ],
+            "unknowns": [_normalize_plain_string(item) for item in output.unknowns],
             "decision_risks": [
-                _strip_leading_markdown_marker(item) for item in output.decision_risks
+                _normalize_plain_string(item) for item in output.decision_risks
             ],
             "legal_review_questions": [
                 LegalReviewQuestion(
                     question=item.question,
-                    reason=_strip_leading_markdown_marker(item.reason),
+                    reason=_normalize_plain_string(item.reason),
                 )
                 for item in output.legal_review_questions
             ],
             "verification_questions": [
                 VerificationQuestion(
                     question=item.question,
-                    why_it_matters=_strip_leading_markdown_marker(
-                        item.why_it_matters
-                    ),
+                    why_it_matters=_normalize_plain_string(item.why_it_matters),
                 )
                 for item in output.verification_questions
             ],
@@ -90,8 +87,8 @@ def normalize_plain_string_fields(
     )
 
 
-def _strip_leading_markdown_marker(value: str) -> str:
-    stripped = value.lstrip()
+def _normalize_plain_string(value: str) -> str:
+    stripped = unicodedata.normalize("NFKC", value).lstrip()
     while stripped[:1] in {">", "-", "*"}:
         stripped = stripped[1:].lstrip()
     return stripped
