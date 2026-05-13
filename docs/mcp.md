@@ -30,8 +30,6 @@ Supported clause types:
 
 Unknown clause types return `found: false` with empty hint lists.
 
-## What This Does Not Do Yet
-
 ## Enable During Generation
 
 MCP hints are off by default. To allow the existing OpenRouter/MAF agent to call the local MCP tool during generation:
