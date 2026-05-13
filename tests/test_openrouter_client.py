@@ -123,6 +123,27 @@ def test_openrouter_client_reads_model_from_environment(monkeypatch):
     assert client.model_name == "env-model"
 
 
+def test_openrouter_client_loads_system_prompt_from_jinja_template(monkeypatch):
+    created_agents = []
+
+    class FakeOpenAIChatClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def as_agent(self, **kwargs):
+            created_agents.append(kwargs)
+            return FakeAgent(SimpleNamespace(value=_output(), text=""))
+
+    monkeypatch.setattr(openrouter, "OpenAIChatClient", FakeOpenAIChatClient)
+
+    client = OpenRouterQuestionClient(api_key="test-key", model_name="test-model")
+
+    assert client.agent is not None
+    assert created_agents[0]["instructions"] == openrouter.SYSTEM_PROMPT
+    assert "Generate verification questions for a contract clause" in openrouter.SYSTEM_PROMPT
+    assert "Return structured output only." in openrouter.SYSTEM_PROMPT
+
+
 def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch):
     response = SimpleNamespace(
         value=_output(),

@@ -11,6 +11,7 @@ warnings.filterwarnings("ignore", message=r".*is experimental.*")
 
 from agent_framework import Agent
 from agent_framework_openai import OpenAIChatClient
+from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER
@@ -20,14 +21,16 @@ from contract_question_agent.workflows import tracing
 
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
 
-SYSTEM_PROMPT = (
-    "Generate verification questions for a contract clause. Do not provide legal "
-    "advice. Do not decide whether the clause is legal, enforceable, acceptable, "
-    "or whether the user should sign. Generate questions a user can discuss with "
-    "a qualified legal professional. Stay grounded in the given clause text. "
-    "Return structured output only."
+
+_PROMPT_ENV = Environment(
+    loader=PackageLoader("contract_question_agent", "prompts"),
+    autoescape=select_autoescape(default=False),
+    undefined=StrictUndefined,
+    keep_trailing_newline=True,
 )
+SYSTEM_PROMPT = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE).render().strip()
 
 
 class OpenRouterQuestionClient:
