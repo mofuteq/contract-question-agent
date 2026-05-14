@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-from contract_question_agent.safety import SAFETY_DISCLAIMER, apply_safety_check
-from contract_question_agent.schemas import VerificationQuestionOutput
+from contract_question_agent.safety import (
+    SAFETY_DISCLAIMER,
+    apply_safety_check,
+    normalize_plain_string_fields,
+)
+from contract_question_agent.schemas import (
+    LegalReviewQuestion,
+    SelectedReviewLens,
+    VerificationQuestion,
+    VerificationQuestionOutput,
+)
 
 
 def _output(text: str) -> VerificationQuestionOutput:
@@ -47,3 +56,79 @@ def test_safety_check_excludes_evidence_text():
 
     assert checked.safety_status == "passed"
     assert checked.safety_warnings == []
+
+
+def test_plain_string_normalization_strips_leading_markdown_markers():
+    output = _output("> Which activities are covered?")
+    output = output.model_copy(
+        update={
+            "decision_risks": ["- The reviewer may not know the scope."],
+            "legal_review_questions": [
+                LegalReviewQuestion(
+                    question="What facts matter?",
+                    reason="* The clause turns on facts outside the excerpt.",
+                )
+            ],
+            "verification_questions": [
+                VerificationQuestion(
+                    question="Which roles are covered?",
+                    why_it_matters="> The clause references covered roles.",
+                )
+            ],
+        }
+    )
+
+    normalized = normalize_plain_string_fields(output)
+
+    assert normalized.unknowns == ["Which activities are covered?"]
+    assert normalized.decision_risks == [
+        "The reviewer may not know the scope."
+    ]
+    assert normalized.legal_review_questions[0].reason == (
+        "The clause turns on facts outside the excerpt."
+    )
+    assert normalized.verification_questions[0].why_it_matters == (
+        "The clause references covered roles."
+    )
+    plain_strings = [
+        *normalized.unknowns,
+        *normalized.decision_risks,
+        normalized.legal_review_questions[0].reason,
+        normalized.verification_questions[0].why_it_matters,
+    ]
+    assert all(not item.startswith((">", "-", "*")) for item in plain_strings)
+
+
+def test_plain_string_normalization_nfkc_normalizes_before_marker_cleanup():
+    output = _output("＞ Which activities are covered?")
+    output = output.model_copy(
+        update={
+            "selected_review_lenses": [
+                SelectedReviewLens(
+                    label="＊ ＡＤＡＭＳ",
+                    source="mcp_clause_review_hints",
+                    reason="＞ ＡＤＡＭＳ appears in the clause.",
+                )
+            ],
+            "decision_risks": ["－ Scope may affect operations."],
+            "legal_review_questions": [
+                LegalReviewQuestion(
+                    question="What facts matter?",
+                    reason="＊ Facts outside the excerpt may matter.",
+                )
+            ],
+        }
+    )
+
+    normalized = normalize_plain_string_fields(output)
+
+    assert normalized.unknowns == ["Which activities are covered?"]
+    assert normalized.decision_risks == ["Scope may affect operations."]
+    assert normalized.legal_review_questions[0].reason == (
+        "Facts outside the excerpt may matter."
+    )
+    assert normalized.selected_review_lenses[0].label == "ADAMS"
+    assert normalized.selected_review_lenses[0].reason == (
+        "ADAMS appears in the clause."
+    )
+    assert normalized.selected_review_lenses[0].source == "mcp_clause_review_hints"

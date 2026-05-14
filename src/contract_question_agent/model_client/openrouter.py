@@ -19,7 +19,7 @@ from mcp.client.stdio import stdio_client
 
 from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
-from contract_question_agent.safety import SAFETY_DISCLAIMER
+from contract_question_agent.safety import SAFETY_DISCLAIMER, normalize_plain_string_fields
 from contract_question_agent.schemas import VerificationQuestionOutput
 from contract_question_agent.workflows import tracing
 
@@ -400,6 +400,7 @@ def _with_generation_defaults(
     output: VerificationQuestionOutput,
     model_name: str,
 ) -> VerificationQuestionOutput:
+    output = normalize_plain_string_fields(output)
     return output.model_copy(
         update={
             "safety_disclaimer": output.safety_disclaimer or SAFETY_DISCLAIMER,

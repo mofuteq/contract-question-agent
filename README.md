@@ -274,6 +274,23 @@ verification prompts, not legal conclusions.
 5. Is any compensation or consideration provided in exchange for the
    post-termination restriction?
 
+**Example selected review lenses**:
+
+```json
+[
+  {
+    "label": "Duration",
+    "source": "mcp_clause_review_hints",
+    "reason": "The clause includes a 24-month post-termination period."
+  },
+  {
+    "label": "Geographic scope",
+    "source": "mcp_clause_review_hints",
+    "reason": "The territory is defined by where the company conducts business."
+  }
+]
+```
+
 These are prompts for human review. They are not statements about whether
 the clause is enforceable or reasonable, and they are not a recommendation
 to sign or not sign.

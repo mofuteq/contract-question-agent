@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
-from contract_question_agent.schemas import VerificationQuestionOutput
+from contract_question_agent.schemas import (
+    LegalReviewQuestion,
+    SelectedReviewLens,
+    VerificationQuestion,
+    VerificationQuestionOutput,
+)
 
 
 SAFETY_DISCLAIMER = (
@@ -32,6 +38,7 @@ def find_banned_phrases(value: Any) -> list[str]:
 
 def apply_safety_check(output: VerificationQuestionOutput) -> VerificationQuestionOutput:
     """Annotate a structured output with deterministic safety status."""
+    output = normalize_plain_string_fields(output)
     payload = output.model_dump(exclude={"evidence_text"})
     found = find_banned_phrases(payload)
     warnings = [f"banned phrase found: {phrase}" for phrase in found]
@@ -42,6 +49,49 @@ def apply_safety_check(output: VerificationQuestionOutput) -> VerificationQuesti
             "safety_warnings": warnings,
         }
     )
+
+
+def normalize_plain_string_fields(
+    output: VerificationQuestionOutput,
+) -> VerificationQuestionOutput:
+    """Apply NFKC normalization and remove leading Markdown markers."""
+    return output.model_copy(
+        update={
+            "selected_review_lenses": [
+                SelectedReviewLens(
+                    label=_normalize_plain_string(item.label),
+                    source=item.source,
+                    reason=_normalize_plain_string(item.reason),
+                )
+                for item in output.selected_review_lenses
+            ],
+            "unknowns": [_normalize_plain_string(item) for item in output.unknowns],
+            "decision_risks": [
+                _normalize_plain_string(item) for item in output.decision_risks
+            ],
+            "legal_review_questions": [
+                LegalReviewQuestion(
+                    question=item.question,
+                    reason=_normalize_plain_string(item.reason),
+                )
+                for item in output.legal_review_questions
+            ],
+            "verification_questions": [
+                VerificationQuestion(
+                    question=item.question,
+                    why_it_matters=_normalize_plain_string(item.why_it_matters),
+                )
+                for item in output.verification_questions
+            ],
+        }
+    )
+
+
+def _normalize_plain_string(value: str) -> str:
+    stripped = unicodedata.normalize("NFKC", value).lstrip()
+    while stripped[:1] in {">", "-", "*"}:
+        stripped = stripped[1:].lstrip()
+    return stripped
 
 
 def _flatten_text(value: Any) -> str:
