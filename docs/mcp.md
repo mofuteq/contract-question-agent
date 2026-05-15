@@ -46,6 +46,9 @@ The LangGraph topology remains unchanged. The retrieved candidates are
 advisory review lenses, not legal conclusions, and the model is instructed
 to select only lenses grounded in the clause text.
 
+Task-level behavior is documented in
+`src/contract_question_agent/skills/contract_verification_questions/skill.md`.
+
 ## Current Tool
 
 The server exposes exactly one tool:

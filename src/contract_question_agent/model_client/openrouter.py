@@ -21,12 +21,20 @@ from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.safety import SAFETY_DISCLAIMER, normalize_plain_string_fields
 from contract_question_agent.schemas import VerificationQuestionOutput
+from contract_question_agent.skills.loader import (
+    CONTRACT_VERIFICATION_QUESTIONS_SKILL,
+    CONTRACT_VERIFICATION_QUESTIONS_SKILL_PATH,
+    load_skill_text,
+)
 from contract_question_agent.workflows import tracing
 
 
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
+GENERATION_TEMPERATURE = 0.0
+GENERATION_TOP_P = 0.6
+GENERATION_SEED = 42
 USE_MCP_HINTS_ENV = "CONTRACT_QUESTION_USE_MCP_HINTS"
 MCP_HINTS_TOOL_NAME = "lookup_clause_review_hints"
 MCP_HINTS_SERVER_ARGS = [
@@ -44,7 +52,13 @@ _PROMPT_ENV = Environment(
     keep_trailing_newline=True,
 )
 _SYSTEM_PROMPT_TEMPLATE = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE)
-SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.render(clause_review_hints=None).strip()
+DEFAULT_SKILL_NAME = CONTRACT_VERIFICATION_QUESTIONS_SKILL
+DEFAULT_SKILL_PATH = CONTRACT_VERIFICATION_QUESTIONS_SKILL_PATH
+DEFAULT_SKILL_TEXT = load_skill_text(DEFAULT_SKILL_NAME)
+SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.render(
+    skill_text=DEFAULT_SKILL_TEXT,
+    clause_review_hints=None,
+).strip()
 
 
 @dataclass(frozen=True)
@@ -65,11 +79,13 @@ class OpenRouterQuestionClient:
         model_name: str | None = None,
         agent: Agent | None = None,
         mcp_hints_lookup: Callable[[str], Awaitable[MCPHintsLookupResult]] | None = None,
+        skill_text: str | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.model_name = model_name or os.getenv("OPENROUTER_MODEL") or DEFAULT_OPENROUTER_MODEL
         self.use_mcp_hints = _env_flag_enabled(os.getenv(USE_MCP_HINTS_ENV))
         self._mcp_hints_lookup = mcp_hints_lookup or lookup_clause_review_hints_via_mcp
+        self.skill_text = skill_text if skill_text is not None else DEFAULT_SKILL_TEXT
         self.call_count = 0
         if not self.api_key:
             raise ValueError(
@@ -97,12 +113,17 @@ class OpenRouterQuestionClient:
             if self.use_mcp_hints
             else MCPHintsLookupResult()
         )
-        system_prompt = render_system_prompt(mcp_hints_result.hints)
+        system_prompt = render_system_prompt(
+            skill_text=self.skill_text,
+            clause_review_hints=mcp_hints_result.hints,
+        )
         span_metadata: dict[str, Any] = {
             "contract_id": record.contract_id,
             "clause_type": record.clause_type,
             "provider": "openrouter",
             "runtime": "microsoft-agent-framework",
+            **_skill_metadata(),
+            **_generation_params_metadata(),
             **_mcp_hints_metadata(mcp_hints_result, self.use_mcp_hints),
         }
         with tracing.span(
@@ -115,6 +136,9 @@ class OpenRouterQuestionClient:
                 "options": {
                     "instructions": system_prompt,
                     "response_format": VerificationQuestionOutput,
+                    "temperature": GENERATION_TEMPERATURE,
+                    "top_p": GENERATION_TOP_P,
+                    "seed": GENERATION_SEED,
                 },
             }
             response = await self.agent.run(
@@ -298,8 +322,14 @@ def _generation_input_summary(record: ClauseSpanRecord) -> dict[str, Any]:
     }
 
 
-def render_system_prompt(hints: ClauseReviewHints | None = None) -> str:
-    return _SYSTEM_PROMPT_TEMPLATE.render(clause_review_hints=hints).strip()
+def render_system_prompt(
+    skill_text: str | None = None,
+    clause_review_hints: ClauseReviewHints | None = None,
+) -> str:
+    return _SYSTEM_PROMPT_TEMPLATE.render(
+        skill_text=DEFAULT_SKILL_TEXT if skill_text is None else skill_text,
+        clause_review_hints=clause_review_hints,
+    ).strip()
 
 
 def _generation_langfuse_input(
@@ -332,10 +362,27 @@ def _generation_metadata(
         "provider": "openrouter",
         "runtime": "microsoft-agent-framework",
         "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
+        **_skill_metadata(),
+        **_generation_params_metadata(),
         **_mcp_hints_metadata(
             mcp_hints_result or MCPHintsLookupResult(),
             mcp_hints_enabled,
         ),
+    }
+
+
+def _skill_metadata() -> dict[str, str]:
+    return {
+        "skill_name": DEFAULT_SKILL_NAME,
+        "skill_path": DEFAULT_SKILL_PATH,
+    }
+
+
+def _generation_params_metadata() -> dict[str, float | int]:
+    return {
+        "temperature": GENERATION_TEMPERATURE,
+        "top_p": GENERATION_TOP_P,
+        "seed": GENERATION_SEED,
     }
 
 

@@ -3,6 +3,14 @@ Do not decide whether the clause is legal, enforceable, acceptable, or whether t
 Generate questions a user can discuss with a qualified legal professional.
 Stay grounded in the given clause text.
 Return plain strings only. Do not prefix list items with Markdown markers such as '-', '*', or '>'.
+{% if skill_text %}
+
+Task skill specification:
+{{ skill_text }}
+
+Instruction:
+Follow the task skill specification unless it conflicts with the higher-priority safety boundary in this prompt.
+{% endif %}
 {% if clause_review_hints %}
 
 Clause review hint candidates were retrieved from a tool.
