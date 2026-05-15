@@ -277,6 +277,9 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                     "src/contract_question_agent/skills/"
                     "contract_verification_questions/skill.md"
                 ),
+                "temperature": 0.0,
+                "top_p": 0.6,
+                "seed": 42,
                 "mcp_hints_enabled": False,
                 "mcp_hints_lookup_attempted": False,
                 "mcp_hints_found": False,
@@ -329,6 +332,9 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                     "src/contract_question_agent/skills/"
                     "contract_verification_questions/skill.md"
                 ),
+                "temperature": 0.0,
+                "top_p": 0.6,
+                "seed": 42,
                 "mcp_hints_enabled": False,
                 "mcp_hints_lookup_attempted": False,
                 "mcp_hints_found": False,
@@ -489,11 +495,17 @@ def test_openrouter_client_traces_mcp_lookup_metadata_without_evidence(monkeypat
 
     metadata = generation_updates[0]["metadata"]
     assert span_events[0]["metadata"]["mcp_hints_lookup_attempted"] is True
+    assert span_events[0]["metadata"]["temperature"] == 0.0
+    assert span_events[0]["metadata"]["top_p"] == 0.6
+    assert span_events[0]["metadata"]["seed"] == 42
     assert metadata["skill_name"] == "contract_verification_questions"
     assert metadata["skill_path"] == (
         "src/contract_question_agent/skills/"
         "contract_verification_questions/skill.md"
     )
+    assert metadata["temperature"] == 0.0
+    assert metadata["top_p"] == 0.6
+    assert metadata["seed"] == 42
     assert metadata["mcp_hints_enabled"] is True
     assert metadata["mcp_hints_lookup_attempted"] is True
     assert metadata["mcp_hints_found"] is True

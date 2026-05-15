@@ -123,6 +123,7 @@ class OpenRouterQuestionClient:
             "provider": "openrouter",
             "runtime": "microsoft-agent-framework",
             **_skill_metadata(),
+            **_generation_params_metadata(),
             **_mcp_hints_metadata(mcp_hints_result, self.use_mcp_hints),
         }
         with tracing.span(
@@ -362,6 +363,7 @@ def _generation_metadata(
         "runtime": "microsoft-agent-framework",
         "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
         **_skill_metadata(),
+        **_generation_params_metadata(),
         **_mcp_hints_metadata(
             mcp_hints_result or MCPHintsLookupResult(),
             mcp_hints_enabled,
@@ -373,6 +375,14 @@ def _skill_metadata() -> dict[str, str]:
     return {
         "skill_name": DEFAULT_SKILL_NAME,
         "skill_path": DEFAULT_SKILL_PATH,
+    }
+
+
+def _generation_params_metadata() -> dict[str, float | int]:
+    return {
+        "temperature": GENERATION_TEMPERATURE,
+        "top_p": GENERATION_TOP_P,
+        "seed": GENERATION_SEED,
     }
 
 
