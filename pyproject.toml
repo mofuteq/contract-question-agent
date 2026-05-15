@@ -34,7 +34,10 @@ dev = ["pytest>=7"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-contract_question_agent = ["prompts/*.j2"]
+contract_question_agent = [
+    "prompts/*.j2",
+    "skills/contract_verification_questions/skill.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

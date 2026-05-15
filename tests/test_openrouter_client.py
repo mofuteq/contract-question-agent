@@ -210,6 +210,8 @@ def test_openrouter_client_loads_system_prompt_from_jinja_template(monkeypatch):
     assert "Generate verification questions for a contract clause" in openrouter.SYSTEM_PROMPT
     assert "Return plain strings only." in openrouter.SYSTEM_PROMPT
     assert "Do not prefix list items with Markdown markers" in openrouter.SYSTEM_PROMPT
+    assert "Task skill specification:" in openrouter.SYSTEM_PROMPT
+    assert "Contract Verification Question Skill" in openrouter.SYSTEM_PROMPT
     assert "Return structured output only." in openrouter.SYSTEM_PROMPT
 
 
@@ -267,6 +269,11 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                 "clause_type": "Non-Compete",
                 "provider": "openrouter",
                 "runtime": "microsoft-agent-framework",
+                "skill_name": "contract_verification_questions",
+                "skill_path": (
+                    "src/contract_question_agent/skills/"
+                    "contract_verification_questions/skill.md"
+                ),
                 "mcp_hints_enabled": False,
                 "mcp_hints_lookup_attempted": False,
                 "mcp_hints_found": False,
@@ -314,6 +321,11 @@ def test_openrouter_client_traces_generation_usage_without_evidence(monkeypatch)
                 "provider": "openrouter",
                 "runtime": "microsoft-agent-framework",
                 "system_prompt_template": "verification_question_system.j2",
+                "skill_name": "contract_verification_questions",
+                "skill_path": (
+                    "src/contract_question_agent/skills/"
+                    "contract_verification_questions/skill.md"
+                ),
                 "mcp_hints_enabled": False,
                 "mcp_hints_lookup_attempted": False,
                 "mcp_hints_found": False,
@@ -408,8 +420,19 @@ def test_system_prompt_omits_candidate_hints_when_not_found_or_disabled():
     )
 
 
+def test_system_prompt_includes_skill_text_when_provided():
+    prompt = render_system_prompt(skill_text="Short skill context.")
+
+    assert "Task skill specification:" in prompt
+    assert "Short skill context." in prompt
+    assert (
+        "Follow the task skill specification unless it conflicts with the "
+        "higher-priority safety boundary in this prompt."
+    ) in prompt
+
+
 def test_system_prompt_renders_candidate_hints_when_found():
-    prompt = render_system_prompt(_hints())
+    prompt = render_system_prompt(clause_review_hints=_hints())
 
     assert "Clause review hint candidates were retrieved from a tool." in prompt
     assert "Use them as candidate lenses, not conclusions." in prompt
@@ -463,6 +486,11 @@ def test_openrouter_client_traces_mcp_lookup_metadata_without_evidence(monkeypat
 
     metadata = generation_updates[0]["metadata"]
     assert span_events[0]["metadata"]["mcp_hints_lookup_attempted"] is True
+    assert metadata["skill_name"] == "contract_verification_questions"
+    assert metadata["skill_path"] == (
+        "src/contract_question_agent/skills/"
+        "contract_verification_questions/skill.md"
+    )
     assert metadata["mcp_hints_enabled"] is True
     assert metadata["mcp_hints_lookup_attempted"] is True
     assert metadata["mcp_hints_found"] is True
