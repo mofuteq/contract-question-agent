@@ -290,9 +290,22 @@ def summarize_state(state: Any) -> dict[str, Any]:
             "rows_generated",
             "safety_failed_count",
             "rows_written",
+            "regeneration_count",
         ):
             if key in data:
                 summary[key] = data[key]
+        if "regeneration_requested" in data:
+            summary["regeneration_requested"] = data["regeneration_requested"]
+        if "reflection_results" in data and isinstance(
+            data["reflection_results"],
+            list,
+        ):
+            summary["reflection_result_count"] = len(data["reflection_results"])
+            summary["reflection_failed_count"] = sum(
+                1
+                for result in data["reflection_results"]
+                if isinstance(result, dict) and result.get("status") == "failed"
+            )
         if "records" in data and isinstance(data["records"], list):
             summary["record_count"] = len(data["records"])
         if "outputs" in data and isinstance(data["outputs"], list):

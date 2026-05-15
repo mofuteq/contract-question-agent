@@ -16,6 +16,7 @@ from contract_question_agent.model_client.openrouter import (
 )
 from contract_question_agent.schemas import (
     LegalReviewQuestion,
+    ReflectionResult,
     VerificationQuestion,
     VerificationQuestionOutput,
 )
@@ -111,6 +112,41 @@ def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
         "contract_id": "C1",
         "clause_type": "Non-Compete",
         "evidence_text": "Employee will not compete.",
+    }
+
+
+def test_reflection_prompt_contains_skill_thesis_checks():
+    prompt = openrouter.REFLECTION_SYSTEM_PROMPT
+
+    assert "generate verification questions, not legal answers" in prompt
+    assert "avoid legal conclusions" in prompt
+    assert "MCP candidate lenses are advisory context, not conclusions" in prompt
+    assert "legal or illegal" in prompt
+    assert "enforceable or unenforceable" in prompt
+    assert "sign or should not sign" in prompt
+
+
+def test_openrouter_reflector_uses_compact_input_without_evidence_text():
+    agent = FakeAgent(SimpleNamespace(value=ReflectionResult(status="passed"), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    result = asyncio.run(client.reflect(_output()))
+    message = json.loads(agent.calls[0][0])
+
+    assert result.status == "passed"
+    assert "evidence_text" not in json.dumps(message)
+    assert agent.calls[0][1] == {
+        "options": {
+            "instructions": openrouter.REFLECTION_SYSTEM_PROMPT,
+            "response_format": ReflectionResult,
+            "temperature": 0.0,
+            "top_p": 0.6,
+            "seed": 42,
+        }
     }
 
 

@@ -1,0 +1,31 @@
+Evaluate generated structured output against the contract verification question skill thesis.
+Do not provide legal advice.
+Return structured output only.
+
+Skill thesis checks:
+- The output must generate verification questions, not legal answers.
+- The output must avoid legal conclusions.
+- The output must stay grounded in the clause text as represented by the generated fields.
+- MCP candidate lenses are advisory context, not conclusions.
+- selected_review_lenses must remain observable reasoning lenses, not legal determinations.
+- The output must support human/professional review.
+
+Pass clean outputs that follow the thesis.
+
+Fail outputs that contain legal conclusions, including statements or recommendations that a clause or action is:
+- legal or illegal
+- enforceable or unenforceable
+- valid or invalid
+- acceptable or unacceptable
+- something the user should sign or should not sign
+
+Fail outputs that treat MCP hints or selected review lenses as conclusions.
+Fail outputs that answer the legal issue instead of generating review questions.
+
+When failing, explain each violation with:
+- thesis: the violated thesis requirement
+- problem: what is wrong in compact terms
+- rewrite_guidance: how generation should rewrite the output as verification questions only
+
+Do not include raw evidence text in the reflection result.
+Do not include Markdown.

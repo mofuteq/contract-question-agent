@@ -28,6 +28,7 @@ from contract_question_agent.schemas import (
     GeneratedQuestions,
     LoadedClauseSpans,
     QuestionModelClient,
+    ReflectedQuestions,
     SafetyCheckedQuestions,
     WrittenQuestions,
 )
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 LOAD_CLAUSE_SPANS = "LOAD_CLAUSE_SPANS"
 FILTER_RECORDS = "FILTER_RECORDS"
 GENERATE_MINIMAL_QUESTIONS = "GENERATE_MINIMAL_QUESTIONS"
+REFLECT_AGAINST_SKILL_THESIS = "REFLECT_AGAINST_SKILL_THESIS"
 SAFETY_CHECK = "SAFETY_CHECK"
 WRITE_OUTPUT = "WRITE_OUTPUT"
 LANGGRAPH_WORKFLOW_RUN_NAME = "verification-question-workflow"
@@ -52,6 +54,7 @@ class WorkflowGraphState(TypedDict):
         | LoadedClauseSpans
         | FilteredClauseSpans
         | GeneratedQuestions
+        | ReflectedQuestions
         | SafetyCheckedQuestions
         | WrittenQuestions
     )
@@ -151,11 +154,11 @@ def build_workflow(*, model_client: QuestionModelClient):
         state: WorkflowGraphState,
         config: Optional[RunnableConfig] = None,
     ) -> WorkflowGraphState:
-        filtered = cast(FilteredClauseSpans, state["value"])
+        filtered = cast(FilteredClauseSpans | ReflectedQuestions, state["value"])
         with tracing.state_transition(
             GENERATE_MINIMAL_QUESTIONS,
             input_state=filtered,
-            next_node=SAFETY_CHECK,
+            next_node=REFLECT_AGAINST_SKILL_THESIS,
             config=config,
         ) as record_output:
             generated = await nodes.generate_minimal_questions_node(
@@ -166,11 +169,54 @@ def build_workflow(*, model_client: QuestionModelClient):
             record_output(generated)
             return {"value": generated}
 
-    async def safety_node(
+    async def reflect_node(
         state: WorkflowGraphState,
         config: Optional[RunnableConfig] = None,
     ) -> WorkflowGraphState:
         generated = cast(GeneratedQuestions, state["value"])
+        with tracing.state_transition(
+            REFLECT_AGAINST_SKILL_THESIS,
+            input_state=generated,
+            next_node=None,
+            config=config,
+        ) as record_output:
+            reflected = await nodes.reflect_against_skill_thesis_node(
+                generated,
+                model_client,
+            )
+            failed_count = sum(
+                1
+                for result in reflected.reflection_results
+                if result.status == "failed"
+            )
+            logger.info(
+                "reflection_failed_count=%s regeneration_requested=%s "
+                "regeneration_count=%s",
+                failed_count,
+                reflected.regeneration_requested,
+                reflected.regeneration_count,
+            )
+            record_output(reflected)
+            tracing.update_current_span(
+                metadata={
+                    "node": REFLECT_AGAINST_SKILL_THESIS,
+                    "input_state": "GeneratedQuestions",
+                    "next_node": (
+                        GENERATE_MINIMAL_QUESTIONS
+                        if reflected.regeneration_requested
+                        else SAFETY_CHECK
+                    ),
+                    "output_state": "ReflectedQuestions",
+                    **_reflection_metadata(reflected),
+                }
+            )
+            return {"value": reflected}
+
+    async def safety_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        generated = cast(GeneratedQuestions | ReflectedQuestions, state["value"])
         with tracing.state_transition(
             SAFETY_CHECK,
             input_state=generated,
@@ -201,16 +247,32 @@ def build_workflow(*, model_client: QuestionModelClient):
     graph.add_node(LOAD_CLAUSE_SPANS, load_node)
     graph.add_node(FILTER_RECORDS, filter_node)
     graph.add_node(GENERATE_MINIMAL_QUESTIONS, generate_node)
+    graph.add_node(REFLECT_AGAINST_SKILL_THESIS, reflect_node)
     graph.add_node(SAFETY_CHECK, safety_node)
     graph.add_node(WRITE_OUTPUT, write_node)
 
     graph.set_entry_point(LOAD_CLAUSE_SPANS)
     graph.add_edge(LOAD_CLAUSE_SPANS, FILTER_RECORDS)
     graph.add_edge(FILTER_RECORDS, GENERATE_MINIMAL_QUESTIONS)
-    graph.add_edge(GENERATE_MINIMAL_QUESTIONS, SAFETY_CHECK)
+    graph.add_edge(GENERATE_MINIMAL_QUESTIONS, REFLECT_AGAINST_SKILL_THESIS)
+    graph.add_conditional_edges(
+        REFLECT_AGAINST_SKILL_THESIS,
+        _route_after_reflection,
+        {
+            GENERATE_MINIMAL_QUESTIONS: GENERATE_MINIMAL_QUESTIONS,
+            SAFETY_CHECK: SAFETY_CHECK,
+        },
+    )
     graph.add_edge(SAFETY_CHECK, WRITE_OUTPUT)
     graph.add_edge(WRITE_OUTPUT, END)
     return graph.compile()
+
+
+def _route_after_reflection(state: WorkflowGraphState) -> str:
+    reflected = cast(ReflectedQuestions, state["value"])
+    if reflected.regeneration_requested:
+        return GENERATE_MINIMAL_QUESTIONS
+    return SAFETY_CHECK
 
 
 def _validate_workflow_output(result: WorkflowGraphState) -> WrittenQuestions:
@@ -278,4 +340,22 @@ def _written_summary(written: WrittenQuestions) -> dict[str, object]:
         "rows_generated": written.rows_generated,
         "safety_failed_count": written.safety_failed_count,
         "rows_written": written.rows_written,
+    }
+
+
+def _reflection_metadata(reflected: ReflectedQuestions) -> dict[str, object]:
+    failed_results = [
+        result for result in reflected.reflection_results if result.status == "failed"
+    ]
+    violations = [
+        violation.model_dump(mode="json")
+        for result in failed_results
+        for violation in result.violations
+    ]
+    return {
+        "reflection_status": "failed" if failed_results else "passed",
+        "reflection_violation_count": len(violations),
+        "regeneration_requested": reflected.regeneration_requested,
+        "regeneration_count": reflected.regeneration_count,
+        "reflection_violations": violations,
     }

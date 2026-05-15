@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from contract_question_agent.safety import apply_safety_check
-from contract_question_agent.schemas import GeneratedQuestions, SafetyCheckedQuestions
+from contract_question_agent.schemas import (
+    GeneratedQuestions,
+    ReflectedQuestions,
+    SafetyCheckedQuestions,
+)
 
 
-def safety_check_node(state: GeneratedQuestions) -> SafetyCheckedQuestions:
+def safety_check_node(state: GeneratedQuestions | ReflectedQuestions) -> SafetyCheckedQuestions:
     outputs = [apply_safety_check(output) for output in state.outputs]
     safety_failed_count = sum(
         1 for output in outputs if output.safety_status == "failed"
