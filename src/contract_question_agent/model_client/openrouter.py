@@ -32,6 +32,9 @@ from contract_question_agent.workflows import tracing
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
+GENERATION_TEMPERATURE = 0.0
+GENERATION_TOP_P = 0.6
+GENERATION_SEED = 42
 USE_MCP_HINTS_ENV = "CONTRACT_QUESTION_USE_MCP_HINTS"
 MCP_HINTS_TOOL_NAME = "lookup_clause_review_hints"
 MCP_HINTS_SERVER_ARGS = [
@@ -132,6 +135,9 @@ class OpenRouterQuestionClient:
                 "options": {
                     "instructions": system_prompt,
                     "response_format": VerificationQuestionOutput,
+                    "temperature": GENERATION_TEMPERATURE,
+                    "top_p": GENERATION_TOP_P,
+                    "seed": GENERATION_SEED,
                 },
             }
             response = await self.agent.run(

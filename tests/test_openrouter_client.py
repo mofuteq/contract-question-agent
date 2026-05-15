@@ -102,6 +102,9 @@ def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
         "options": {
             "instructions": openrouter.SYSTEM_PROMPT,
             "response_format": VerificationQuestionOutput,
+            "temperature": 0.0,
+            "top_p": 0.6,
+            "seed": 42,
         }
     }
     assert json.loads(agent.calls[0][0]) == {
