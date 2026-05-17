@@ -13,18 +13,19 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 from contract_question_agent.api.schemas import (
-    GenerateVerificationQuestionsRequest,
-    GenerateVerificationQuestionsResponse,
+    RunRequest,
+    RunResponse,
 )
 from contract_question_agent.cli_generate_questions import (
     DryRunQuestionClient,
     LOG_FILENAME,
     METADATA_FILENAME,
     OUTPUT_FILENAME,
-    make_run_id,
 )
+from contract_question_agent.cuad_loader import ClauseSpanRecord
 from contract_question_agent.model_client import (
     DEFAULT_OPENROUTER_MODEL,
     OpenRouterQuestionClient,
@@ -34,73 +35,86 @@ from contract_question_agent.workflows import run_workflow_async
 
 logger = logging.getLogger(__name__)
 
+API_OUTPUT_DIR = Path("data/cuad/api-runs")
+INPUT_FILENAME = "input_clause_spans.jsonl"
 
-class RunAlreadyExistsError(ValueError):
-    """Raised when a requested run id would overwrite local run artifacts."""
 
+async def run_workflow_from_api_request(api_request: RunRequest) -> RunResponse:
+    """Adapt one HTTP clause payload into the existing JSONL workflow."""
+    run_id = str(uuid4())
+    created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    run_dir = API_OUTPUT_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
 
-async def run_verification_question_workflow(
-    api_request: GenerateVerificationQuestionsRequest,
-) -> GenerateVerificationQuestionsResponse:
-    """Build the existing workflow request and return its completed result."""
-    run_id = api_request.run_id or make_run_id()
-    run_dir = api_request.output_dir / run_id
-    if run_dir.exists():
-        raise RunAlreadyExistsError(f"Run directory already exists: {run_dir}")
+    input_path = run_dir / INPUT_FILENAME
+    output_path = run_dir / OUTPUT_FILENAME
+    metadata_path = run_dir / METADATA_FILENAME
+    log_path = run_dir / LOG_FILENAME
+
+    record = ClauseSpanRecord(
+        contract_id=api_request.contract_id or run_id,
+        source_file="api-request",
+        clause_type=api_request.clause_type,
+        evidence_text=api_request.evidence_text,
+        start_char=0,
+        end_char=len(api_request.evidence_text),
+        label_present=True,
+    )
+    input_path.write_text(record.model_dump_json() + "\n", encoding="utf-8")
 
     model_name = (
-        api_request.model
+        api_request.model_name
         or os.getenv("OPENROUTER_MODEL")
         or DEFAULT_OPENROUTER_MODEL
     )
     model_client = _build_model_client(model_name, dry_run=api_request.dry_run)
-    output_path = run_dir / OUTPUT_FILENAME
-    metadata_path = run_dir / METADATA_FILENAME
-    log_path = run_dir / LOG_FILENAME
     workflow_request = GenerateQuestionsRequest(
-        input_path=api_request.input_path,
+        input_path=input_path,
         output_path=output_path,
         metadata_path=metadata_path,
         log_path=log_path,
         run_id=run_id,
-        created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+        created_at=created_at,
         clause_type=api_request.clause_type,
-        contract_id=api_request.contract_id,
-        limit=api_request.limit,
-        offset=api_request.offset,
+        contract_id=api_request.contract_id or run_id,
+        limit=1,
+        offset=0,
         model_name=model_name,
         dry_run=api_request.dry_run,
     )
 
-    run_dir.mkdir(parents=True, exist_ok=False)
     with _run_file_logging(log_path):
         _log_run_start(workflow_request)
         result = await run_workflow_async(workflow_request, model_client=model_client)
         _log_run_result(result)
 
-    return GenerateVerificationQuestionsResponse(
-        run_id=workflow_request.run_id,
-        created_at=workflow_request.created_at,
-        input_path=workflow_request.input_path,
-        output_path=result.output_path,
-        metadata_path=result.metadata_path,
-        log_path=result.log_path,
-        clause_type=workflow_request.clause_type,
-        contract_id=workflow_request.contract_id,
-        limit=workflow_request.limit,
-        offset=workflow_request.offset,
-        model_name=workflow_request.model_name,
-        dry_run=workflow_request.dry_run,
+    selected_review_lenses = [
+        lens.model_dump()
+        for output in result.outputs
+        for lens in output.selected_review_lenses
+    ]
+    safety_status = result.outputs[0].safety_status if result.outputs else None
+
+    return RunResponse(
+        run_id=run_id,
+        created_at=created_at,
         rows_read=result.rows_read,
         rows_filtered=result.rows_filtered,
         rows_in_scope=result.rows_in_scope,
         rows_out_of_scope=result.rows_out_of_scope,
         rows_generated=result.rows_generated,
+        rows_written=result.rows_written,
         scope_status_counts=result.scope_status_counts,
         out_of_scope_reasons=result.out_of_scope_reasons,
+        selected_review_lenses=selected_review_lenses,
         safety_failed_count=result.safety_failed_count,
-        rows_written=result.rows_written,
-        outputs=result.outputs,
+        safety_status=safety_status,
+        verification_questions=result.outputs,
+        model_name=workflow_request.model_name,
+        dry_run=workflow_request.dry_run,
+        output_path=result.output_path,
+        metadata_path=result.metadata_path,
+        log_path=result.log_path,
     )
 
 

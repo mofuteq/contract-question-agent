@@ -254,9 +254,17 @@ workflow orchestration.
 
 The API is a minimal HTTP boundary over the same workflow. It does not add
 legal-advice behavior, autonomous tool calling, persistence, auth, background
-jobs, WebSockets, AG-UI, or run history. Requests execute the LangGraph
-workflow synchronously and return the same row-count metrics plus the generated
-outputs and local artifact paths.
+jobs, WebSockets, AG-UI, or run history.
+
+`POST /runs` accepts a single clause payload, writes a temporary one-row JSONL
+input internally, executes the existing LangGraph workflow synchronously, and
+returns workflow observability fields plus generated verification questions.
+
+FastAPI writes local artifacts under `data/cuad/api-runs/{run_id}/`.
+
+This adapter is intended for local development and internal poor E2E validation.
+Do not expose it publicly without path restrictions, authentication, and
+deployment hardening.
 
 ```bash
 uv run uvicorn contract_question_agent.api.app:app --reload
@@ -265,14 +273,12 @@ uv run uvicorn contract_question_agent.api.app:app --reload
 Dry-run example:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/verification-questions \
+curl -X POST http://127.0.0.1:8000/runs \
   -H "content-type: application/json" \
   -d '{
-    "input_path": "data/cuad/processed/clause_spans.jsonl",
-    "output_dir": "data/cuad/runs",
-    "run_id": "api-dry-run",
+    "contract_id": "demo-contract",
     "clause_type": "Non-Compete",
-    "limit": 1,
+    "evidence_text": "Employee will not compete for one year after termination.",
     "dry_run": true
   }'
 ```

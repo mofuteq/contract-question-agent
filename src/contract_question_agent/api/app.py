@@ -7,14 +7,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status
 
-from contract_question_agent.api.adapter import (
-    RunAlreadyExistsError,
-    run_verification_question_workflow,
-)
+from contract_question_agent.api.adapter import run_workflow_from_api_request
 from contract_question_agent.api.schemas import (
-    GenerateVerificationQuestionsRequest,
-    GenerateVerificationQuestionsResponse,
     HealthResponse,
+    RunRequest,
+    RunResponse,
 )
 
 
@@ -36,20 +33,13 @@ def create_app(*, load_env: bool = True) -> FastAPI:
         return HealthResponse()
 
     @application.post(
-        "/verification-questions",
-        response_model=GenerateVerificationQuestionsResponse,
+        "/runs",
+        response_model=RunResponse,
         status_code=status.HTTP_200_OK,
     )
-    async def generate_verification_questions(
-        request: GenerateVerificationQuestionsRequest,
-    ) -> GenerateVerificationQuestionsResponse:
+    async def create_run(request: RunRequest) -> RunResponse:
         try:
-            return await run_verification_question_workflow(request)
-        except RunAlreadyExistsError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
+            return await run_workflow_from_api_request(request)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
