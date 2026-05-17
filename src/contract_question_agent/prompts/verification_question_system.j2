@@ -11,6 +11,12 @@ Task skill specification:
 Instruction:
 Follow the task skill specification unless it conflicts with the higher-priority safety boundary in this prompt.
 {% endif %}
+{% if regeneration_guidance %}
+
+Reflection found that the previous output violated the skill thesis:
+{{ regeneration_guidance }}
+Regenerate the output as verification questions only. Do not provide legal conclusions.
+{% endif %}
 {% if clause_review_hints %}
 
 Clause review hint candidates were retrieved from a tool.

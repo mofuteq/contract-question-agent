@@ -14,8 +14,14 @@ from contract_question_agent.model_client.openrouter import (
     extract_usage_details,
     render_system_prompt,
 )
+from contract_question_agent.reflection_metadata import (
+    REFLECTION_METADATA_FIELD_MAX_LENGTH,
+    REFLECTION_METADATA_TRUNCATION_SUFFIX,
+)
 from contract_question_agent.schemas import (
     LegalReviewQuestion,
+    ReflectionResult,
+    ReflectionViolation,
     VerificationQuestion,
     VerificationQuestionOutput,
 )
@@ -85,6 +91,10 @@ def _hints() -> ClauseReviewHints:
     )
 
 
+def _long_text(label: str) -> str:
+    return f"{label}: " + ("x" * (REFLECTION_METADATA_FIELD_MAX_LENGTH + 100))
+
+
 def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
     agent = FakeAgent(SimpleNamespace(value=_output(), text=""))
     client = OpenRouterQuestionClient(
@@ -112,6 +122,93 @@ def test_openrouter_client_uses_agent_response_format_with_pydantic_value():
         "clause_type": "Non-Compete",
         "evidence_text": "Employee will not compete.",
     }
+
+
+def test_reflection_prompt_contains_skill_thesis_checks():
+    prompt = openrouter.REFLECTION_SYSTEM_PROMPT
+
+    assert "generate verification questions, not legal answers" in prompt
+    assert "avoid legal conclusions" in prompt
+    assert "MCP candidate lenses are advisory context, not conclusions" in prompt
+    assert "legal or illegal" in prompt
+    assert "enforceable or unenforceable" in prompt
+    assert "sign or should not sign" in prompt
+
+
+def test_openrouter_reflector_uses_compact_input_without_evidence_text():
+    agent = FakeAgent(SimpleNamespace(value=ReflectionResult(status="passed"), text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+
+    result = asyncio.run(client.reflect(_output()))
+    message = json.loads(agent.calls[0][0])
+
+    assert result.status == "passed"
+    assert "evidence_text" not in json.dumps(message)
+    assert agent.calls[0][1] == {
+        "options": {
+            "instructions": openrouter.REFLECTION_SYSTEM_PROMPT,
+            "response_format": ReflectionResult,
+            "temperature": 0.0,
+            "top_p": 0.6,
+            "seed": 42,
+        }
+    }
+
+
+def test_openrouter_reflection_metadata_truncates_violations_only(monkeypatch):
+    full_thesis = _long_text("thesis")
+    full_problem = _long_text("problem")
+    full_rewrite_guidance = _long_text("rewrite")
+    full_regeneration_guidance = _long_text("retry")
+    reflection_result = ReflectionResult(
+        status="failed",
+        violations=[
+            ReflectionViolation(
+                thesis=full_thesis,
+                problem=full_problem,
+                rewrite_guidance=full_rewrite_guidance,
+            )
+        ],
+        regeneration_guidance=full_regeneration_guidance,
+    )
+    agent = FakeAgent(SimpleNamespace(value=reflection_result, text=""))
+    client = OpenRouterQuestionClient(
+        api_key="test-key",
+        model_name="test-model",
+        agent=agent,
+    )
+    generation_updates: list[dict] = []
+
+    @contextmanager
+    def fake_span(name, *, input=None, metadata=None, as_type="span"):
+        yield
+
+    monkeypatch.setattr(openrouter.tracing, "span", fake_span)
+    monkeypatch.setattr(
+        openrouter.tracing,
+        "update_current_generation",
+        lambda **kwargs: generation_updates.append(kwargs),
+    )
+
+    result = asyncio.run(client.reflect(_output()))
+
+    violation = generation_updates[0]["metadata"]["violations"][0]
+    for field, full_text in {
+        "thesis": full_thesis,
+        "problem": full_problem,
+        "rewrite_guidance": full_rewrite_guidance,
+    }.items():
+        assert violation[field] != full_text
+        assert len(violation[field]) == REFLECTION_METADATA_FIELD_MAX_LENGTH
+        assert violation[field].endswith(REFLECTION_METADATA_TRUNCATION_SUFFIX)
+    assert result.violations[0].thesis == full_thesis
+    assert result.violations[0].problem == full_problem
+    assert result.violations[0].rewrite_guidance == full_rewrite_guidance
+    assert result.regeneration_guidance == full_regeneration_guidance
 
 
 def test_openrouter_client_parses_raw_json_text():

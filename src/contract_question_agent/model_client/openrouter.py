@@ -19,8 +19,10 @@ from mcp.client.stdio import stdio_client
 
 from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
+from contract_question_agent.reflection_metadata import reflection_violation_metadata
 from contract_question_agent.safety import SAFETY_DISCLAIMER, normalize_plain_string_fields
 from contract_question_agent.schemas import VerificationQuestionOutput
+from contract_question_agent.schemas import ReflectionResult
 from contract_question_agent.skills.loader import (
     CONTRACT_VERIFICATION_QUESTIONS_SKILL,
     CONTRACT_VERIFICATION_QUESTIONS_SKILL_PATH,
@@ -32,6 +34,7 @@ from contract_question_agent.workflows import tracing
 DEFAULT_OPENROUTER_MODEL = "google/gemini-3-flash-preview"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT_TEMPLATE = "verification_question_system.j2"
+REFLECTION_PROMPT_TEMPLATE = "reflection_system.j2"
 GENERATION_TEMPERATURE = 0.0
 GENERATION_TOP_P = 0.6
 GENERATION_SEED = 42
@@ -52,13 +55,16 @@ _PROMPT_ENV = Environment(
     keep_trailing_newline=True,
 )
 _SYSTEM_PROMPT_TEMPLATE = _PROMPT_ENV.get_template(SYSTEM_PROMPT_TEMPLATE)
+_REFLECTION_PROMPT_TEMPLATE = _PROMPT_ENV.get_template(REFLECTION_PROMPT_TEMPLATE)
 DEFAULT_SKILL_NAME = CONTRACT_VERIFICATION_QUESTIONS_SKILL
 DEFAULT_SKILL_PATH = CONTRACT_VERIFICATION_QUESTIONS_SKILL_PATH
 DEFAULT_SKILL_TEXT = load_skill_text(DEFAULT_SKILL_NAME)
 SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.render(
     skill_text=DEFAULT_SKILL_TEXT,
     clause_review_hints=None,
+    regeneration_guidance=None,
 ).strip()
+REFLECTION_SYSTEM_PROMPT = _REFLECTION_PROMPT_TEMPLATE.render().strip()
 
 
 @dataclass(frozen=True)
@@ -101,7 +107,12 @@ class OpenRouterQuestionClient:
             instructions=SYSTEM_PROMPT,
         )
 
-    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(
+        self,
+        record: ClauseSpanRecord,
+        *,
+        regeneration_guidance: str | None = None,
+    ) -> VerificationQuestionOutput:
         self.call_count += 1
         request_payload = {
             "contract_id": record.contract_id,
@@ -116,6 +127,7 @@ class OpenRouterQuestionClient:
         system_prompt = render_system_prompt(
             skill_text=self.skill_text,
             clause_review_hints=mcp_hints_result.hints,
+            regeneration_guidance=regeneration_guidance,
         )
         span_metadata: dict[str, Any] = {
             "contract_id": record.contract_id,
@@ -161,6 +173,58 @@ class OpenRouterQuestionClient:
                 update_kwargs["usage_details"] = usage_details
             tracing.update_current_generation(**update_kwargs)
             return output
+
+    async def reflect(self, output: VerificationQuestionOutput) -> ReflectionResult:
+        span_metadata: dict[str, Any] = {
+            "contract_id": output.contract_id,
+            "clause_type": output.clause_type,
+            "provider": "openrouter",
+            "runtime": "microsoft-agent-framework",
+            "system_prompt_template": REFLECTION_PROMPT_TEMPLATE,
+            **_generation_params_metadata(),
+        }
+        reflection_input = _reflection_input(output)
+        with tracing.span(
+            "openrouter-skill-thesis-reflector",
+            input=reflection_input,
+            metadata=span_metadata,
+            as_type="generation",
+        ):
+            response = await self.agent.run(
+                json.dumps(reflection_input, ensure_ascii=True),
+                options={
+                    "instructions": REFLECTION_SYSTEM_PROMPT,
+                    "response_format": ReflectionResult,
+                    "temperature": GENERATION_TEMPERATURE,
+                    "top_p": GENERATION_TOP_P,
+                    "seed": GENERATION_SEED,
+                },
+            )
+            result = _coerce_reflection_response(response)
+            update_kwargs: dict[str, Any] = {
+                "model": self.model_name,
+                "input": {
+                    "messages": [
+                        {"role": "system", "content": REFLECTION_SYSTEM_PROMPT},
+                        {"role": "user", "content": reflection_input},
+                    ]
+                },
+                "output": _reflection_output_summary(result),
+                "metadata": span_metadata
+                | {
+                    "reflection_status": result.status,
+                    "reflection_violation_count": len(result.violations),
+                    "violations": [
+                        reflection_violation_metadata(violation)
+                        for violation in result.violations
+                    ],
+                },
+            }
+            usage_details = extract_usage_details(response)
+            if usage_details is not None:
+                update_kwargs["usage_details"] = usage_details
+            tracing.update_current_generation(**update_kwargs)
+            return result
 
 
 async def lookup_clause_review_hints_via_mcp(
@@ -325,10 +389,12 @@ def _generation_input_summary(record: ClauseSpanRecord) -> dict[str, Any]:
 def render_system_prompt(
     skill_text: str | None = None,
     clause_review_hints: ClauseReviewHints | None = None,
+    regeneration_guidance: str | None = None,
 ) -> str:
     return _SYSTEM_PROMPT_TEMPLATE.render(
         skill_text=DEFAULT_SKILL_TEXT if skill_text is None else skill_text,
         clause_review_hints=clause_review_hints,
+        regeneration_guidance=regeneration_guidance,
     ).strip()
 
 
@@ -443,6 +509,19 @@ def _coerce_agent_response(response: Any, model_name: str) -> VerificationQuesti
     )
 
 
+def _coerce_reflection_response(response: Any) -> ReflectionResult:
+    value = getattr(response, "value", None)
+    if isinstance(value, ReflectionResult):
+        return value
+    if value is not None:
+        return ReflectionResult.model_validate(value)
+
+    text = getattr(response, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("OpenRouter reflector response did not contain structured output.")
+    return ReflectionResult.model_validate(json.loads(text))
+
+
 def _with_generation_defaults(
     output: VerificationQuestionOutput,
     model_name: str,
@@ -456,3 +535,30 @@ def _with_generation_defaults(
             "model_name": output.model_name or model_name,
         }
     )
+
+
+def _reflection_input(output: VerificationQuestionOutput) -> dict[str, Any]:
+    return {
+        "clause_type": output.clause_type,
+        "selected_review_lenses": [
+            item.model_dump(mode="json") for item in output.selected_review_lenses
+        ],
+        "unknowns": output.unknowns,
+        "decision_risks": output.decision_risks,
+        "legal_review_questions": [
+            item.model_dump(mode="json") for item in output.legal_review_questions
+        ],
+        "verification_questions": [
+            item.model_dump(mode="json") for item in output.verification_questions
+        ],
+        "suggested_next_step": output.suggested_next_step,
+        "safety_status": output.safety_status,
+    }
+
+
+def _reflection_output_summary(result: ReflectionResult) -> dict[str, Any]:
+    return {
+        "reflection_status": result.status,
+        "reflection_violation_count": len(result.violations),
+        "regeneration_guidance_present": bool(result.regeneration_guidance),
+    }

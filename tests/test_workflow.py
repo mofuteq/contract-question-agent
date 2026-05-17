@@ -9,10 +9,17 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
+from contract_question_agent.reflection_metadata import (
+    REFLECTION_METADATA_FIELD_MAX_LENGTH,
+    REFLECTION_METADATA_TRUNCATION_SUFFIX,
+)
 from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import (
     GenerateQuestionsRequest,
     LegalReviewQuestion,
+    ReflectedQuestions,
+    ReflectionResult,
+    ReflectionViolation,
     VerificationQuestion,
     VerificationQuestionOutput,
     WrittenQuestions,
@@ -26,12 +33,26 @@ from contract_question_agent.workflows.nodes.filter_records import filter_clause
 class FakeQuestionClient:
     model_name = "fake-model"
 
-    def __init__(self, *, unsafe: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        unsafe: bool = False,
+        reflection_results: list[ReflectionResult] | None = None,
+    ) -> None:
         self.call_count = 0
+        self.reflect_count = 0
         self.unsafe = unsafe
+        self.reflection_results = reflection_results or []
+        self.regeneration_guidance_calls: list[str | None] = []
 
-    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(
+        self,
+        record: ClauseSpanRecord,
+        *,
+        regeneration_guidance: str | None = None,
+    ) -> VerificationQuestionOutput:
         self.call_count += 1
+        self.regeneration_guidance_calls.append(regeneration_guidance)
         return VerificationQuestionOutput(
             contract_id=record.contract_id,
             clause_type=record.clause_type,
@@ -57,6 +78,12 @@ class FakeQuestionClient:
             model_name=self.model_name,
         )
 
+    async def reflect(self, output: VerificationQuestionOutput) -> ReflectionResult:
+        self.reflect_count += 1
+        if self.reflection_results:
+            return self.reflection_results.pop(0)
+        return ReflectionResult(status="passed")
+
 
 def _span(
     contract_id: str,
@@ -79,6 +106,29 @@ def _write_spans(path: Path, records: list[ClauseSpanRecord]) -> None:
         for record in records:
             handle.write(record.model_dump_json())
             handle.write("\n")
+
+
+def _failed_reflection() -> ReflectionResult:
+    return ReflectionResult(
+        status="failed",
+        violations=[
+            ReflectionViolation(
+                thesis="avoid legal conclusions",
+                problem="The output tells the user the clause is enforceable.",
+                rewrite_guidance=(
+                    "Regenerate as verification questions only. "
+                    "Do not provide legal conclusions."
+                ),
+            )
+        ],
+        regeneration_guidance=(
+            "Do not provide legal conclusions; ask clause-grounded questions instead."
+        ),
+    )
+
+
+def _long_text(label: str) -> str:
+    return f"{label}: " + ("x" * (REFLECTION_METADATA_FIELD_MAX_LENGTH + 100))
 
 
 def test_filter_records_is_deterministic_for_cli_args():
@@ -223,6 +273,170 @@ def test_run_workflow_metadata_records_safety_failure_count(tmp_path):
     assert rows[0].safety_status == "failed"
 
 
+def test_reflection_failure_triggers_exactly_one_regeneration(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(input_path, [_span("C1", "Non-Compete", "Do not compete.")])
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-reflection-retry-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        limit=1,
+        model_name="fake-model",
+        dry_run=True,
+    )
+    fake_client = FakeQuestionClient(
+        reflection_results=[_failed_reflection(), ReflectionResult(status="passed")]
+    )
+
+    result = run_workflow(request, model_client=fake_client)
+
+    assert result.rows_written == 1
+    assert result.safety_failed_count == 0
+    assert fake_client.call_count == 2
+    assert fake_client.reflect_count == 2
+    assert fake_client.regeneration_guidance_calls[0] is None
+    assert "Do not provide legal conclusions" in (
+        fake_client.regeneration_guidance_calls[1] or ""
+    )
+
+
+def test_reflection_metadata_truncates_violation_text_only(tmp_path):
+    full_thesis = _long_text("thesis")
+    full_problem = _long_text("problem")
+    full_rewrite_guidance = _long_text("rewrite")
+    result = ReflectionResult(
+        status="failed",
+        violations=[
+            ReflectionViolation(
+                thesis=full_thesis,
+                problem=full_problem,
+                rewrite_guidance=full_rewrite_guidance,
+            )
+        ],
+        regeneration_guidance=_long_text("retry"),
+    )
+    request = GenerateQuestionsRequest(
+        input_path=tmp_path / "clause_spans.jsonl",
+        output_path=tmp_path / "verification_questions.jsonl",
+        metadata_path=tmp_path / "run_metadata.json",
+        log_path=tmp_path / "run.log",
+        run_id="workflow-reflection-metadata-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        model_name="fake-model",
+        dry_run=True,
+    )
+    reflected = ReflectedQuestions(
+        request=request,
+        records=[],
+        outputs=[],
+        reflection_results=[result],
+        rows_read=0,
+        rows_filtered=0,
+        rows_generated=0,
+        regeneration_requested=True,
+    )
+
+    metadata = workflow._reflection_metadata(reflected)
+    violation = metadata["reflection_violations"][0]
+
+    for field, full_text in {
+        "thesis": full_thesis,
+        "problem": full_problem,
+        "rewrite_guidance": full_rewrite_guidance,
+    }.items():
+        assert violation[field] != full_text
+        assert len(violation[field]) == REFLECTION_METADATA_FIELD_MAX_LENGTH
+        assert violation[field].endswith(REFLECTION_METADATA_TRUNCATION_SUFFIX)
+    assert result.violations[0].thesis == full_thesis
+    assert result.violations[0].problem == full_problem
+    assert result.violations[0].rewrite_guidance == full_rewrite_guidance
+
+
+def test_reflection_retry_guidance_remains_untruncated(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(input_path, [_span("C1", "Non-Compete", "Do not compete.")])
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-reflection-full-retry-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        limit=1,
+        model_name="fake-model",
+        dry_run=True,
+    )
+    full_thesis = _long_text("thesis")
+    full_problem = _long_text("problem")
+    full_rewrite_guidance = _long_text("rewrite")
+    full_regeneration_guidance = _long_text("retry")
+    fake_client = FakeQuestionClient(
+        reflection_results=[
+            ReflectionResult(
+                status="failed",
+                violations=[
+                    ReflectionViolation(
+                        thesis=full_thesis,
+                        problem=full_problem,
+                        rewrite_guidance=full_rewrite_guidance,
+                    )
+                ],
+                regeneration_guidance=full_regeneration_guidance,
+            ),
+            ReflectionResult(status="passed"),
+        ]
+    )
+
+    run_workflow(request, model_client=fake_client)
+
+    retry_guidance = fake_client.regeneration_guidance_calls[1] or ""
+    assert full_regeneration_guidance in retry_guidance
+    assert full_thesis in retry_guidance
+    assert full_problem in retry_guidance
+    assert full_rewrite_guidance in retry_guidance
+
+
+def test_repeated_reflection_failure_does_not_loop_forever(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(input_path, [_span("C1", "Non-Compete", "Do not compete.")])
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-reflection-bounded-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        limit=1,
+        model_name="fake-model",
+        dry_run=True,
+    )
+    fake_client = FakeQuestionClient(
+        reflection_results=[_failed_reflection(), _failed_reflection()]
+    )
+
+    result = run_workflow(request, model_client=fake_client)
+
+    assert result.rows_written == 1
+    assert fake_client.call_count == 2
+    assert fake_client.reflect_count == 2
+    assert len(fake_client.regeneration_guidance_calls) == 2
+
+
 def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
@@ -300,6 +514,7 @@ def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
         "LOAD_CLAUSE_SPANS",
         "FILTER_RECORDS",
         "GENERATE_MINIMAL_QUESTIONS",
+        "REFLECT_AGAINST_SKILL_THESIS",
         "SAFETY_CHECK",
         "WRITE_OUTPUT",
     ]
@@ -314,6 +529,11 @@ def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
     assert transition_events[0]["output"]["rows_read"] == 1
     assert transition_events[-1]["metadata"]["next_node"] == "END"
     assert transition_events[-1]["output"]["rows_written"] == 1
+    reflection_event = transition_events[3]
+    assert reflection_event["metadata"]["reflection_status"] == "passed"
+    assert reflection_event["metadata"]["reflection_violation_count"] == 0
+    assert reflection_event["metadata"]["regeneration_requested"] is False
+    assert reflection_event["metadata"]["regeneration_count"] == 0
     assert "evidence_text" not in json.dumps(transition_events)
 
 

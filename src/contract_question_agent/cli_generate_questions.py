@@ -19,6 +19,7 @@ from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import (
     GenerateQuestionsRequest,
     LegalReviewQuestion,
+    ReflectionResult,
     VerificationQuestion,
     VerificationQuestionOutput,
 )
@@ -39,7 +40,12 @@ class DryRunQuestionClient:
     def __init__(self, model_name: str) -> None:
         self.model_name = model_name
 
-    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(
+        self,
+        record: ClauseSpanRecord,
+        *,
+        regeneration_guidance: str | None = None,
+    ) -> VerificationQuestionOutput:
         return VerificationQuestionOutput(
             contract_id=record.contract_id,
             clause_type=record.clause_type,
@@ -77,6 +83,9 @@ class DryRunQuestionClient:
             safety_warnings=[],
             model_name=self.model_name,
         )
+
+    async def reflect(self, output: VerificationQuestionOutput) -> ReflectionResult:
+        return ReflectionResult(status="passed")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from contract_question_agent.schemas import (
     LegalReviewQuestion,
+    ReflectionResult,
+    ReflectionViolation,
     SelectedReviewLens,
     VerificationQuestion,
     VerificationQuestionOutput,
@@ -63,6 +65,33 @@ def test_verification_question_output_accepts_selected_review_lenses():
 
     assert output.selected_review_lenses[0].label == "Time period"
     assert output.selected_review_lenses[0].source == "mcp_clause_review_hints"
+
+
+def test_reflection_schema_accepts_passed_output():
+    result = ReflectionResult(status="passed")
+
+    assert result.status == "passed"
+    assert result.violations == []
+    assert result.regeneration_guidance == ""
+
+
+def test_reflection_schema_accepts_failed_output():
+    result = ReflectionResult(
+        status="failed",
+        violations=[
+            ReflectionViolation(
+                thesis="generate verification questions, not legal answers",
+                problem="The output answers the issue.",
+                rewrite_guidance="Rewrite as questions for professional review.",
+            )
+        ],
+        regeneration_guidance="Ask questions instead of answering the legal issue.",
+    )
+
+    assert result.status == "failed"
+    assert result.violations[0].thesis == (
+        "generate verification questions, not legal answers"
+    )
 
 
 def test_verification_question_output_rejects_extra_fields():

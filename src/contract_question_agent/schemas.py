@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 
@@ -46,6 +46,18 @@ class VerificationQuestionOutput(_StrictModel):
     model_name: str
 
 
+class ReflectionViolation(_StrictModel):
+    thesis: str
+    problem: str
+    rewrite_guidance: str
+
+
+class ReflectionResult(_StrictModel):
+    status: Literal["passed", "failed"]
+    violations: list[ReflectionViolation] = Field(default_factory=list)
+    regeneration_guidance: str = ""
+
+
 class GenerateQuestionsRequest(_StrictModel):
     input_path: Path
     output_path: Path
@@ -72,14 +84,32 @@ class FilteredClauseSpans(_StrictModel):
     records: list[ClauseSpanRecord]
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
+    regeneration_count: NonNegativeInt = 0
+    regeneration_guidance: str = ""
 
 
 class GeneratedQuestions(_StrictModel):
     request: GenerateQuestionsRequest
+    records: list[ClauseSpanRecord] = Field(default_factory=list)
     outputs: list[VerificationQuestionOutput]
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
     rows_generated: NonNegativeInt
+    regeneration_count: NonNegativeInt = 0
+    regeneration_guidance: str = ""
+
+
+class ReflectedQuestions(_StrictModel):
+    request: GenerateQuestionsRequest
+    records: list[ClauseSpanRecord]
+    outputs: list[VerificationQuestionOutput]
+    reflection_results: list[ReflectionResult]
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
+    rows_generated: NonNegativeInt
+    regeneration_count: NonNegativeInt = 0
+    regeneration_guidance: str = ""
+    regeneration_requested: bool = False
 
 
 class SafetyCheckedQuestions(_StrictModel):
@@ -126,5 +156,13 @@ class RunMetadata(_StrictModel):
 class QuestionModelClient(Protocol):
     model_name: str
 
-    async def generate(self, record: ClauseSpanRecord) -> VerificationQuestionOutput:
+    async def generate(
+        self,
+        record: ClauseSpanRecord,
+        *,
+        regeneration_guidance: str | None = None,
+    ) -> VerificationQuestionOutput:
         """Generate one structured output for one CUAD clause span."""
+
+    async def reflect(self, output: VerificationQuestionOutput) -> ReflectionResult:
+        """Evaluate one structured output against the skill thesis."""
