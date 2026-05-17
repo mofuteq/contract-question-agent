@@ -80,6 +80,9 @@ tree, Agent Graph, business-node spans, and nested generation usage.
 LangGraph:
   workflow orchestration / state transitions
 
+FastAPI:
+  thin HTTP adapter around the existing workflow
+
 MAF + OpenRouter:
   node-internal LLM calling / structured output
 
@@ -102,6 +105,7 @@ src/contract_question_agent/
   cuad_downloader.py  # optional downloader
   cuad_loader.py      # parser + JSONL writer
   cli_generate_questions.py
+  api/                # thin FastAPI HTTP adapter
   model_client/        # MAF-backed OpenRouter LLM calling path
   workflows/
     workflow.py        # LangGraph orchestration / state transitions
@@ -169,7 +173,9 @@ The generator is intentionally a linear LangGraph workflow:
 ```
 LOAD_CLAUSE_SPANS
 -> FILTER_RECORDS
+-> IS_IN_SCOPE
 -> GENERATE_MINIMAL_QUESTIONS
+-> REFLECT_AGAINST_SKILL_THESIS
 -> SAFETY_CHECK
 -> WRITE_OUTPUT
 ```
@@ -243,6 +249,33 @@ The workflow calls `model_client.generate()` once per filtered clause span. If
 upstream requests, the duplicate request is likely inside the node-internal
 MAF/OpenRouter structured-output path or provider-side handling, not LangGraph
 workflow orchestration.
+
+## FastAPI adapter
+
+The API is a minimal HTTP boundary over the same workflow. It does not add
+legal-advice behavior, autonomous tool calling, persistence, auth, background
+jobs, WebSockets, AG-UI, or run history. Requests execute the LangGraph
+workflow synchronously and return the same row-count metrics plus the generated
+outputs and local artifact paths.
+
+```bash
+uv run uvicorn contract_question_agent.api.app:app --reload
+```
+
+Dry-run example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/verification-questions \
+  -H "content-type: application/json" \
+  -d '{
+    "input_path": "data/cuad/processed/clause_spans.jsonl",
+    "output_dir": "data/cuad/runs",
+    "run_id": "api-dry-run",
+    "clause_type": "Non-Compete",
+    "limit": 1,
+    "dry_run": true
+  }'
+```
 
 ## Example output
 
