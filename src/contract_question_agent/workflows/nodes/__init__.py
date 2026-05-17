@@ -4,6 +4,10 @@ from contract_question_agent.workflows.nodes.filter_records import filter_record
 from contract_question_agent.workflows.nodes.generate_minimal_questions import (
     generate_minimal_questions_node,
 )
+from contract_question_agent.workflows.nodes.is_in_scope import (
+    is_in_scope_node,
+    is_record_in_scope,
+)
 from contract_question_agent.workflows.nodes.load_clause_spans import (
     load_clause_spans_node,
 )
@@ -16,6 +20,8 @@ from contract_question_agent.workflows.nodes.write_output import write_output_no
 __all__ = [
     "filter_records_node",
     "generate_minimal_questions_node",
+    "is_in_scope_node",
+    "is_record_in_scope",
     "load_clause_spans_node",
     "reflect_against_skill_thesis_node",
     "safety_check_node",

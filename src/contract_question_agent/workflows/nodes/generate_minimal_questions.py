@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from contract_question_agent.schemas import (
-    FilteredClauseSpans,
     GeneratedQuestions,
     QuestionModelClient,
     ReflectedQuestions,
+    ScopedClauseSpans,
 )
 
 
 async def generate_minimal_questions_node(
-    state: FilteredClauseSpans | ReflectedQuestions,
+    state: ScopedClauseSpans | ReflectedQuestions,
     model_client: QuestionModelClient,
 ) -> GeneratedQuestions:
     outputs = [
@@ -27,7 +27,11 @@ async def generate_minimal_questions_node(
         outputs=outputs,
         rows_read=state.rows_read,
         rows_filtered=state.rows_filtered,
+        rows_in_scope=state.rows_in_scope,
+        rows_out_of_scope=state.rows_out_of_scope,
         rows_generated=len(outputs),
+        scope_status_counts=state.scope_status_counts,
+        out_of_scope_reasons=state.out_of_scope_reasons,
         regeneration_count=state.regeneration_count,
         regeneration_guidance=state.regeneration_guidance,
     )

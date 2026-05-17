@@ -28,6 +28,7 @@ from contract_question_agent.workflows import workflow
 from contract_question_agent.workflows import tracing
 from contract_question_agent.workflows import run_workflow, run_workflow_async
 from contract_question_agent.workflows.nodes.filter_records import filter_clause_spans
+from contract_question_agent.workflows.nodes.is_in_scope import is_record_in_scope
 
 
 class FakeQuestionClient:
@@ -152,6 +153,29 @@ def test_filter_records_is_deterministic_for_cli_args():
     ) == [records[2]]
 
 
+def test_scope_check_rejects_empty_evidence_text():
+    result = is_record_in_scope(_span("C1", "Non-Compete", "   "))
+
+    assert result.status == "out_of_scope"
+    assert result.reason == "empty_evidence_text"
+
+
+def test_scope_check_rejects_empty_clause_type():
+    result = is_record_in_scope(_span("C1", "   ", "Do not compete."))
+
+    assert result.status == "out_of_scope"
+    assert result.reason == "empty_clause_type"
+
+
+def test_scope_check_accepts_normal_cuad_like_record():
+    result = is_record_in_scope(
+        _span("C1", "Non-Compete", "Employee will not compete for one year.")
+    )
+
+    assert result.status == "in_scope"
+    assert result.reason == ""
+
+
 def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path):
     input_path = tmp_path / "clause_spans.jsonl"
     output_path = tmp_path / "verification_questions.jsonl"
@@ -186,9 +210,12 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
     assert result.metadata_path == metadata_path
     assert result.rows_read == 3
     assert result.rows_filtered == 1
+    assert result.rows_in_scope == 1
+    assert result.rows_out_of_scope == 0
     assert result.rows_generated == 1
     assert result.safety_failed_count == 0
     assert fake_client.call_count == 1
+    assert fake_client.reflect_count == 1
     rows = [
         VerificationQuestionOutput.model_validate(json.loads(line))
         for line in output_path.read_text(encoding="utf-8").splitlines()
@@ -197,6 +224,58 @@ def test_run_workflow_limit_one_calls_generate_once_and_writes_one_row(tmp_path)
     assert rows[0].contract_id == "C3"
     assert rows[0].safety_status == "passed"
     assert rows[0].safety_disclaimer == SAFETY_DISCLAIMER
+
+
+def test_run_workflow_skips_model_generation_when_all_records_out_of_scope(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(
+        input_path,
+        [
+            _span("C1", "Non-Compete", "   "),
+            _span("C2", "Non-Compete", "short"),
+        ],
+    )
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-out-of-scope-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        model_name="fake-model",
+        dry_run=True,
+    )
+
+    fake_client = FakeQuestionClient()
+    result = run_workflow(request, model_client=fake_client)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert result.rows_written == 0
+    assert result.rows_read == 2
+    assert result.rows_filtered == 2
+    assert result.rows_in_scope == 0
+    assert result.rows_out_of_scope == 2
+    assert result.rows_generated == 0
+    assert result.scope_status_counts == {"out_of_scope": 2}
+    assert result.out_of_scope_reasons == {
+        "empty_evidence_text": 1,
+        "evidence_text_too_short": 1,
+    }
+    assert fake_client.call_count == 0
+    assert fake_client.reflect_count == 0
+    assert output_path.exists()
+    assert output_path.read_text(encoding="utf-8") == ""
+    assert metadata["rows_in_scope"] == 0
+    assert metadata["rows_out_of_scope"] == 2
+    assert metadata["scope_status_counts"] == {"out_of_scope": 2}
+    assert metadata["out_of_scope_reasons"] == {
+        "empty_evidence_text": 1,
+        "evidence_text_too_short": 1,
+    }
 
 
 def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
@@ -232,6 +311,8 @@ def test_run_workflow_limit_three_calls_generate_three_times(tmp_path):
     assert result.rows_written == 3
     assert result.rows_read == 4
     assert result.rows_filtered == 3
+    assert result.rows_in_scope == 3
+    assert result.rows_out_of_scope == 0
     assert result.rows_generated == 3
     assert result.safety_failed_count == 0
     assert fake_client.call_count == 3
@@ -267,7 +348,11 @@ def test_run_workflow_metadata_records_safety_failure_count(tmp_path):
     assert result.safety_failed_count == 1
     assert metadata["rows_read"] == 1
     assert metadata["rows_filtered"] == 1
+    assert metadata["rows_in_scope"] == 1
+    assert metadata["rows_out_of_scope"] == 0
     assert metadata["rows_generated"] == 1
+    assert metadata["scope_status_counts"] == {"in_scope": 1}
+    assert metadata["out_of_scope_reasons"] == {}
     assert metadata["safety_failed_count"] == 1
     assert metadata["rows_written"] == 1
     assert rows[0].safety_status == "failed"
@@ -513,6 +598,7 @@ def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
     assert [event["name"] for event in transition_events] == [
         "LOAD_CLAUSE_SPANS",
         "FILTER_RECORDS",
+        "IS_IN_SCOPE",
         "GENERATE_MINIMAL_QUESTIONS",
         "REFLECT_AGAINST_SKILL_THESIS",
         "SAFETY_CHECK",
@@ -527,9 +613,15 @@ def test_run_workflow_traces_langgraph_state_transitions(tmp_path, monkeypatch):
     assert transition_events[0]["input"]["state"] == "GenerateQuestionsRequest"
     assert transition_events[0]["output"]["state"] == "LoadedClauseSpans"
     assert transition_events[0]["output"]["rows_read"] == 1
+    scope_event = transition_events[2]
+    assert scope_event["metadata"]["next_node"] == "GENERATE_MINIMAL_QUESTIONS"
+    assert scope_event["output"]["state"] == "ScopedClauseSpans"
+    assert scope_event["output"]["rows_in_scope"] == 1
+    assert scope_event["output"]["rows_out_of_scope"] == 0
+    assert scope_event["output"]["scope_status_counts"] == {"in_scope": 1}
     assert transition_events[-1]["metadata"]["next_node"] == "END"
     assert transition_events[-1]["output"]["rows_written"] == 1
-    reflection_event = transition_events[3]
+    reflection_event = transition_events[4]
     assert reflection_event["metadata"]["reflection_status"] == "passed"
     assert reflection_event["metadata"]["reflection_violation_count"] == 0
     assert reflection_event["metadata"]["regeneration_requested"] is False

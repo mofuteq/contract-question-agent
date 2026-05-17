@@ -20,6 +20,10 @@ def safety_check_node(state: GeneratedQuestions | ReflectedQuestions) -> SafetyC
         outputs=outputs,
         rows_read=state.rows_read,
         rows_filtered=state.rows_filtered,
+        rows_in_scope=state.rows_in_scope,
+        rows_out_of_scope=state.rows_out_of_scope,
         rows_generated=state.rows_generated,
+        scope_status_counts=state.scope_status_counts,
+        out_of_scope_reasons=state.out_of_scope_reasons,
         safety_failed_count=safety_failed_count,
     )
