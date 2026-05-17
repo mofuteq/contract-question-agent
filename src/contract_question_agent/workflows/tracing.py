@@ -287,11 +287,16 @@ def summarize_state(state: Any) -> dict[str, Any]:
         for key in (
             "rows_read",
             "rows_filtered",
+            "rows_in_scope",
+            "rows_out_of_scope",
             "rows_generated",
             "safety_failed_count",
             "rows_written",
             "regeneration_count",
         ):
+            if key in data:
+                summary[key] = data[key]
+        for key in ("scope_status_counts", "out_of_scope_reasons"):
             if key in data:
                 summary[key] = data[key]
         if "regeneration_requested" in data:

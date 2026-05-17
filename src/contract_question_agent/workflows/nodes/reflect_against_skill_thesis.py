@@ -35,7 +35,11 @@ async def reflect_against_skill_thesis_node(
         reflection_results=reflection_results,
         rows_read=state.rows_read,
         rows_filtered=state.rows_filtered,
+        rows_in_scope=state.rows_in_scope,
+        rows_out_of_scope=state.rows_out_of_scope,
         rows_generated=state.rows_generated,
+        scope_status_counts=state.scope_status_counts,
+        out_of_scope_reasons=state.out_of_scope_reasons,
         regeneration_count=(
             state.regeneration_count + 1
             if regeneration_requested

@@ -112,13 +112,19 @@ def test_cli_dry_run_writes_run_directory_without_network(tmp_path, monkeypatch)
     assert metadata["dry_run"] is True
     assert metadata["rows_read"] == 2
     assert metadata["rows_filtered"] == 1
+    assert metadata["rows_in_scope"] == 1
+    assert metadata["rows_out_of_scope"] == 0
     assert metadata["rows_generated"] == 1
+    assert metadata["scope_status_counts"] == {"in_scope": 1}
+    assert metadata["out_of_scope_reasons"] == {}
     assert metadata["safety_failed_count"] == 0
     assert metadata["rows_written"] == 1
     assert "T" in metadata["created_at"]
     assert "run_id=test-run" in log_text
     assert "rows_read=2" in log_text
     assert "rows_filtered=1" in log_text
+    assert "rows_in_scope=1" in log_text
+    assert "rows_out_of_scope=0" in log_text
     assert "rows_generated=1" in log_text
     assert "safety_failed_count=0" in log_text
     assert "rows_written=1" in log_text

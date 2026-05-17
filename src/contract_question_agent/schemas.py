@@ -58,6 +58,11 @@ class ReflectionResult(_StrictModel):
     regeneration_guidance: str = ""
 
 
+class ScopeCheckResult(_StrictModel):
+    status: Literal["in_scope", "out_of_scope"]
+    reason: str = ""
+
+
 class GenerateQuestionsRequest(_StrictModel):
     input_path: Path
     output_path: Path
@@ -88,13 +93,31 @@ class FilteredClauseSpans(_StrictModel):
     regeneration_guidance: str = ""
 
 
+class ScopedClauseSpans(_StrictModel):
+    request: GenerateQuestionsRequest
+    records: list[ClauseSpanRecord]
+    scope_results: list[ScopeCheckResult]
+    rows_read: NonNegativeInt
+    rows_filtered: NonNegativeInt
+    rows_in_scope: NonNegativeInt
+    rows_out_of_scope: NonNegativeInt
+    scope_status_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    out_of_scope_reasons: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    regeneration_count: NonNegativeInt = 0
+    regeneration_guidance: str = ""
+
+
 class GeneratedQuestions(_StrictModel):
     request: GenerateQuestionsRequest
     records: list[ClauseSpanRecord] = Field(default_factory=list)
     outputs: list[VerificationQuestionOutput]
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
+    rows_in_scope: NonNegativeInt = 0
+    rows_out_of_scope: NonNegativeInt = 0
     rows_generated: NonNegativeInt
+    scope_status_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    out_of_scope_reasons: dict[str, NonNegativeInt] = Field(default_factory=dict)
     regeneration_count: NonNegativeInt = 0
     regeneration_guidance: str = ""
 
@@ -106,7 +129,11 @@ class ReflectedQuestions(_StrictModel):
     reflection_results: list[ReflectionResult]
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
+    rows_in_scope: NonNegativeInt = 0
+    rows_out_of_scope: NonNegativeInt = 0
     rows_generated: NonNegativeInt
+    scope_status_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    out_of_scope_reasons: dict[str, NonNegativeInt] = Field(default_factory=dict)
     regeneration_count: NonNegativeInt = 0
     regeneration_guidance: str = ""
     regeneration_requested: bool = False
@@ -117,7 +144,11 @@ class SafetyCheckedQuestions(_StrictModel):
     outputs: list[VerificationQuestionOutput]
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
+    rows_in_scope: NonNegativeInt = 0
+    rows_out_of_scope: NonNegativeInt = 0
     rows_generated: NonNegativeInt
+    scope_status_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    out_of_scope_reasons: dict[str, NonNegativeInt] = Field(default_factory=dict)
     safety_failed_count: NonNegativeInt
 
 
@@ -127,7 +158,11 @@ class WrittenQuestions(_StrictModel):
     log_path: Path
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
+    rows_in_scope: NonNegativeInt = 0
+    rows_out_of_scope: NonNegativeInt = 0
     rows_generated: NonNegativeInt
+    scope_status_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    out_of_scope_reasons: dict[str, NonNegativeInt] = Field(default_factory=dict)
     safety_failed_count: NonNegativeInt
     rows_written: int
     outputs: list[VerificationQuestionOutput] = Field(default_factory=list)
@@ -148,7 +183,11 @@ class RunMetadata(_StrictModel):
     dry_run: bool
     rows_read: NonNegativeInt
     rows_filtered: NonNegativeInt
+    rows_in_scope: NonNegativeInt = 0
+    rows_out_of_scope: NonNegativeInt = 0
     rows_generated: NonNegativeInt
+    scope_status_counts: dict[str, NonNegativeInt] = Field(default_factory=dict)
+    out_of_scope_reasons: dict[str, NonNegativeInt] = Field(default_factory=dict)
     safety_failed_count: NonNegativeInt
     rows_written: NonNegativeInt
 

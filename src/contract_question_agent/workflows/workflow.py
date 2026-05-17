@@ -31,6 +31,7 @@ from contract_question_agent.schemas import (
     QuestionModelClient,
     ReflectedQuestions,
     SafetyCheckedQuestions,
+    ScopedClauseSpans,
     WrittenQuestions,
 )
 from contract_question_agent.workflows import nodes
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 LOAD_CLAUSE_SPANS = "LOAD_CLAUSE_SPANS"
 FILTER_RECORDS = "FILTER_RECORDS"
+IS_IN_SCOPE = "IS_IN_SCOPE"
 GENERATE_MINIMAL_QUESTIONS = "GENERATE_MINIMAL_QUESTIONS"
 REFLECT_AGAINST_SKILL_THESIS = "REFLECT_AGAINST_SKILL_THESIS"
 SAFETY_CHECK = "SAFETY_CHECK"
@@ -54,6 +56,7 @@ class WorkflowGraphState(TypedDict):
         GenerateQuestionsRequest
         | LoadedClauseSpans
         | FilteredClauseSpans
+        | ScopedClauseSpans
         | GeneratedQuestions
         | ReflectedQuestions
         | SafetyCheckedQuestions
@@ -66,7 +69,7 @@ def run_workflow(
     *,
     model_client: QuestionModelClient,
 ) -> WrittenQuestions:
-    """Run LOAD -> FILTER -> GENERATE -> SAFETY -> WRITE."""
+    """Run LOAD -> FILTER -> SCOPE -> GENERATE -> SAFETY -> WRITE."""
     return asyncio.run(run_workflow_async(request, model_client=model_client))
 
 
@@ -143,7 +146,7 @@ def build_workflow(*, model_client: QuestionModelClient):
         with tracing.state_transition(
             FILTER_RECORDS,
             input_state=loaded,
-            next_node=GENERATE_MINIMAL_QUESTIONS,
+            next_node=IS_IN_SCOPE,
             config=config,
         ) as record_output:
             filtered = nodes.filter_records_node(loaded)
@@ -151,11 +154,34 @@ def build_workflow(*, model_client: QuestionModelClient):
             record_output(filtered)
             return {"value": filtered}
 
+    async def is_in_scope_node(
+        state: WorkflowGraphState,
+        config: Optional[RunnableConfig] = None,
+    ) -> WorkflowGraphState:
+        filtered = cast(FilteredClauseSpans, state["value"])
+        with tracing.state_transition(
+            IS_IN_SCOPE,
+            input_state=filtered,
+            next_node=GENERATE_MINIMAL_QUESTIONS,
+            config=config,
+        ) as record_output:
+            scoped = nodes.is_in_scope_node(filtered)
+            logger.info(
+                "rows_in_scope=%s rows_out_of_scope=%s scope_status_counts=%s",
+                scoped.rows_in_scope,
+                scoped.rows_out_of_scope,
+                scoped.scope_status_counts,
+            )
+            if scoped.out_of_scope_reasons:
+                logger.info("out_of_scope_reasons=%s", scoped.out_of_scope_reasons)
+            record_output(scoped)
+            return {"value": scoped}
+
     async def generate_node(
         state: WorkflowGraphState,
         config: Optional[RunnableConfig] = None,
     ) -> WorkflowGraphState:
-        filtered = cast(FilteredClauseSpans | ReflectedQuestions, state["value"])
+        filtered = cast(ScopedClauseSpans | ReflectedQuestions, state["value"])
         with tracing.state_transition(
             GENERATE_MINIMAL_QUESTIONS,
             input_state=filtered,
@@ -247,6 +273,7 @@ def build_workflow(*, model_client: QuestionModelClient):
 
     graph.add_node(LOAD_CLAUSE_SPANS, load_node)
     graph.add_node(FILTER_RECORDS, filter_node)
+    graph.add_node(IS_IN_SCOPE, is_in_scope_node)
     graph.add_node(GENERATE_MINIMAL_QUESTIONS, generate_node)
     graph.add_node(REFLECT_AGAINST_SKILL_THESIS, reflect_node)
     graph.add_node(SAFETY_CHECK, safety_node)
@@ -254,7 +281,8 @@ def build_workflow(*, model_client: QuestionModelClient):
 
     graph.set_entry_point(LOAD_CLAUSE_SPANS)
     graph.add_edge(LOAD_CLAUSE_SPANS, FILTER_RECORDS)
-    graph.add_edge(FILTER_RECORDS, GENERATE_MINIMAL_QUESTIONS)
+    graph.add_edge(FILTER_RECORDS, IS_IN_SCOPE)
+    graph.add_edge(IS_IN_SCOPE, GENERATE_MINIMAL_QUESTIONS)
     graph.add_edge(GENERATE_MINIMAL_QUESTIONS, REFLECT_AGAINST_SKILL_THESIS)
     graph.add_conditional_edges(
         REFLECT_AGAINST_SKILL_THESIS,
@@ -338,7 +366,11 @@ def _written_summary(written: WrittenQuestions) -> dict[str, object]:
         "log_path": str(written.log_path),
         "rows_read": written.rows_read,
         "rows_filtered": written.rows_filtered,
+        "rows_in_scope": written.rows_in_scope,
+        "rows_out_of_scope": written.rows_out_of_scope,
         "rows_generated": written.rows_generated,
+        "scope_status_counts": written.scope_status_counts,
+        "out_of_scope_reasons": written.out_of_scope_reasons,
         "safety_failed_count": written.safety_failed_count,
         "rows_written": written.rows_written,
     }
