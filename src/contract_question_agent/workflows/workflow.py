@@ -22,6 +22,7 @@ warnings.filterwarnings(
 
 from langgraph.graph import END, StateGraph
 
+from contract_question_agent.reflection_metadata import reflection_violation_metadata
 from contract_question_agent.schemas import (
     FilteredClauseSpans,
     GenerateQuestionsRequest,
@@ -348,7 +349,7 @@ def _reflection_metadata(reflected: ReflectedQuestions) -> dict[str, object]:
         result for result in reflected.reflection_results if result.status == "failed"
     ]
     violations = [
-        violation.model_dump(mode="json")
+        reflection_violation_metadata(violation)
         for result in failed_results
         for violation in result.violations
     ]

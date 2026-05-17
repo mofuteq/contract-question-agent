@@ -9,10 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from contract_question_agent.cuad_loader import ClauseSpanRecord
+from contract_question_agent.reflection_metadata import (
+    REFLECTION_METADATA_FIELD_MAX_LENGTH,
+    REFLECTION_METADATA_TRUNCATION_SUFFIX,
+)
 from contract_question_agent.safety import SAFETY_DISCLAIMER
 from contract_question_agent.schemas import (
     GenerateQuestionsRequest,
     LegalReviewQuestion,
+    ReflectedQuestions,
     ReflectionResult,
     ReflectionViolation,
     VerificationQuestion,
@@ -120,6 +125,10 @@ def _failed_reflection() -> ReflectionResult:
             "Do not provide legal conclusions; ask clause-grounded questions instead."
         ),
     )
+
+
+def _long_text(label: str) -> str:
+    return f"{label}: " + ("x" * (REFLECTION_METADATA_FIELD_MAX_LENGTH + 100))
 
 
 def test_filter_records_is_deterministic_for_cli_args():
@@ -296,6 +305,106 @@ def test_reflection_failure_triggers_exactly_one_regeneration(tmp_path):
     assert "Do not provide legal conclusions" in (
         fake_client.regeneration_guidance_calls[1] or ""
     )
+
+
+def test_reflection_metadata_truncates_violation_text_only(tmp_path):
+    full_thesis = _long_text("thesis")
+    full_problem = _long_text("problem")
+    full_rewrite_guidance = _long_text("rewrite")
+    result = ReflectionResult(
+        status="failed",
+        violations=[
+            ReflectionViolation(
+                thesis=full_thesis,
+                problem=full_problem,
+                rewrite_guidance=full_rewrite_guidance,
+            )
+        ],
+        regeneration_guidance=_long_text("retry"),
+    )
+    request = GenerateQuestionsRequest(
+        input_path=tmp_path / "clause_spans.jsonl",
+        output_path=tmp_path / "verification_questions.jsonl",
+        metadata_path=tmp_path / "run_metadata.json",
+        log_path=tmp_path / "run.log",
+        run_id="workflow-reflection-metadata-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        model_name="fake-model",
+        dry_run=True,
+    )
+    reflected = ReflectedQuestions(
+        request=request,
+        records=[],
+        outputs=[],
+        reflection_results=[result],
+        rows_read=0,
+        rows_filtered=0,
+        rows_generated=0,
+        regeneration_requested=True,
+    )
+
+    metadata = workflow._reflection_metadata(reflected)
+    violation = metadata["reflection_violations"][0]
+
+    for field, full_text in {
+        "thesis": full_thesis,
+        "problem": full_problem,
+        "rewrite_guidance": full_rewrite_guidance,
+    }.items():
+        assert violation[field] != full_text
+        assert len(violation[field]) == REFLECTION_METADATA_FIELD_MAX_LENGTH
+        assert violation[field].endswith(REFLECTION_METADATA_TRUNCATION_SUFFIX)
+    assert result.violations[0].thesis == full_thesis
+    assert result.violations[0].problem == full_problem
+    assert result.violations[0].rewrite_guidance == full_rewrite_guidance
+
+
+def test_reflection_retry_guidance_remains_untruncated(tmp_path):
+    input_path = tmp_path / "clause_spans.jsonl"
+    output_path = tmp_path / "verification_questions.jsonl"
+    metadata_path = tmp_path / "run_metadata.json"
+    log_path = tmp_path / "run.log"
+    _write_spans(input_path, [_span("C1", "Non-Compete", "Do not compete.")])
+    request = GenerateQuestionsRequest(
+        input_path=input_path,
+        output_path=output_path,
+        metadata_path=metadata_path,
+        log_path=log_path,
+        run_id="workflow-reflection-full-retry-test",
+        created_at="2026-05-10T12:00:00+09:00",
+        clause_type="Non-Compete",
+        limit=1,
+        model_name="fake-model",
+        dry_run=True,
+    )
+    full_thesis = _long_text("thesis")
+    full_problem = _long_text("problem")
+    full_rewrite_guidance = _long_text("rewrite")
+    full_regeneration_guidance = _long_text("retry")
+    fake_client = FakeQuestionClient(
+        reflection_results=[
+            ReflectionResult(
+                status="failed",
+                violations=[
+                    ReflectionViolation(
+                        thesis=full_thesis,
+                        problem=full_problem,
+                        rewrite_guidance=full_rewrite_guidance,
+                    )
+                ],
+                regeneration_guidance=full_regeneration_guidance,
+            ),
+            ReflectionResult(status="passed"),
+        ]
+    )
+
+    run_workflow(request, model_client=fake_client)
+
+    retry_guidance = fake_client.regeneration_guidance_calls[1] or ""
+    assert full_regeneration_guidance in retry_guidance
+    assert full_thesis in retry_guidance
+    assert full_problem in retry_guidance
+    assert full_rewrite_guidance in retry_guidance
 
 
 def test_repeated_reflection_failure_does_not_loop_forever(tmp_path):

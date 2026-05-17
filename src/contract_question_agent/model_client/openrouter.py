@@ -19,6 +19,7 @@ from mcp.client.stdio import stdio_client
 
 from contract_question_agent.clause_hints.schemas import ClauseReviewHints
 from contract_question_agent.cuad_loader import ClauseSpanRecord
+from contract_question_agent.reflection_metadata import reflection_violation_metadata
 from contract_question_agent.safety import SAFETY_DISCLAIMER, normalize_plain_string_fields
 from contract_question_agent.schemas import VerificationQuestionOutput
 from contract_question_agent.schemas import ReflectionResult
@@ -214,7 +215,7 @@ class OpenRouterQuestionClient:
                     "reflection_status": result.status,
                     "reflection_violation_count": len(result.violations),
                     "violations": [
-                        violation.model_dump(mode="json")
+                        reflection_violation_metadata(violation)
                         for violation in result.violations
                     ],
                 },
