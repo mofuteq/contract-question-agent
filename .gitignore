@@ -19,4 +19,3 @@ data/cuad/raw/*
 data/cuad/processed/*
 !data/cuad/processed/.gitkeep
 data/cuad/runs/*
-data/cuad/api-runs/*

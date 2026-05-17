@@ -13,7 +13,6 @@ authors = [{ name = "contract-question-agent contributors" }]
 dependencies = [
     "agent-framework-core>=1.3.0",
     "agent-framework-openai>=1.3.0",
-    "fastapi>=0.115",
     "jinja2>=3.1.6",
     "langchain>=1.2.18",
     "langfuse>=4.6.1",
@@ -21,7 +20,6 @@ dependencies = [
     "mcp[cli]>=1.27.1",
     "pydantic>=2",
     "python-dotenv>=1.2.2",
-    "uvicorn[standard]>=0.30",
 ]
 
 [project.scripts]
@@ -30,7 +28,7 @@ cuad-downloader = "contract_question_agent.cuad_downloader:main"
 contract-question-generate = "contract_question_agent.cli_generate_questions:main"
 
 [dependency-groups]
-dev = ["httpx>=0.27", "pytest>=7"]
+dev = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
