@@ -80,6 +80,9 @@ tree, Agent Graph, business-node spans, and nested generation usage.
 LangGraph:
   workflow orchestration / state transitions
 
+FastAPI:
+  thin HTTP adapter around the existing workflow
+
 MAF + OpenRouter:
   node-internal LLM calling / structured output
 
@@ -102,6 +105,7 @@ src/contract_question_agent/
   cuad_downloader.py  # optional downloader
   cuad_loader.py      # parser + JSONL writer
   cli_generate_questions.py
+  api/                # thin FastAPI HTTP adapter
   model_client/        # MAF-backed OpenRouter LLM calling path
   workflows/
     workflow.py        # LangGraph orchestration / state transitions
@@ -169,7 +173,9 @@ The generator is intentionally a linear LangGraph workflow:
 ```
 LOAD_CLAUSE_SPANS
 -> FILTER_RECORDS
+-> IS_IN_SCOPE
 -> GENERATE_MINIMAL_QUESTIONS
+-> REFLECT_AGAINST_SKILL_THESIS
 -> SAFETY_CHECK
 -> WRITE_OUTPUT
 ```
@@ -243,6 +249,107 @@ The workflow calls `model_client.generate()` once per filtered clause span. If
 upstream requests, the duplicate request is likely inside the node-internal
 MAF/OpenRouter structured-output path or provider-side handling, not LangGraph
 workflow orchestration.
+
+## FastAPI adapter
+
+The API is a minimal HTTP boundary over the same workflow. It does not add
+legal-advice behavior, autonomous tool calling, persistence, auth, background
+jobs, WebSockets, or run history.
+
+`POST /runs` accepts a single clause payload, writes a temporary one-row JSONL
+input internally, executes the existing LangGraph workflow synchronously, and
+returns workflow observability fields plus generated verification questions.
+
+FastAPI writes local artifacts under `data/cuad/api-runs/{run_id}/`.
+
+This adapter is intended for local development and internal poor E2E validation.
+Do not expose it publicly without path restrictions, authentication, and
+deployment hardening.
+
+```bash
+uv run uvicorn contract_question_agent.api.app:app --reload
+```
+
+Dry-run example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/runs \
+  -H "content-type: application/json" \
+  -d '{
+    "contract_id": "demo-contract",
+    "clause_type": "Non-Compete",
+    "evidence_text": "Employee will not compete for one year after termination.",
+    "dry_run": true
+  }'
+```
+
+## AG-UI run event stream
+
+The AG-UI endpoint exposes a minimal human-facing event stream for observing a
+single workflow run.
+
+It is intentionally not a chat UI. The endpoint streams coarse run lifecycle
+events over Server-Sent Events:
+
+- `RUN_STARTED`
+- `STEP_STARTED`
+- `STEP_FINISHED`
+- `STATE_SNAPSHOT`
+- `RUN_FINISHED`
+- `RUN_ERROR`
+
+The stream is designed for a future run viewer. It does not add persistence,
+auth, WebSockets, checkpointing, or run history. LangGraph checkpointing is
+intentionally not added yet.
+
+The event snapshot removes raw `evidence_text` from generated question outputs.
+Local artifacts are still written under `data/cuad/api-runs/{run_id}/`.
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/ag-ui/runs \
+  -H "content-type: application/json" \
+  -d '{
+    "contract_id": "demo-contract",
+    "clause_type": "Non-Compete",
+    "evidence_text": "Employee will not compete for one year after termination.",
+    "dry_run": true
+  }'
+```
+
+## Streamlit AG-UI run viewer
+
+The Streamlit viewer is a minimal human-facing observability UI.
+
+It does not call LangGraph directly. It calls the FastAPI AG-UI SSE endpoint:
+
+```txt
+POST /ag-ui/runs
+```
+
+FastAPI remains the interface boundary, and LangGraph remains the workflow
+owner. Streamlit does not directly call workflow internals, model clients, or
+MCP. No checkpointing, resume support, persistence, auth, WebSockets, or run
+history is added.
+
+Start the FastAPI backend:
+
+```bash
+uv run uvicorn contract_question_agent.api.app:app --reload
+```
+
+Start the Streamlit viewer:
+
+```bash
+uv run streamlit run viewer/streamlit_app.py
+```
+
+Open the Streamlit URL shown in the terminal.
+
+The viewer submits a single clause, reads AG-UI-compatible lifecycle events,
+and renders the final safe state snapshot. It removes raw `evidence_text` from
+rendered backend snapshots.
+
+This is not a chat UI. It is a run/output viewer.
 
 ## Example output
 
