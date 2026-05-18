@@ -316,6 +316,41 @@ curl -N -X POST http://127.0.0.1:8000/ag-ui/runs \
   }'
 ```
 
+## Streamlit AG-UI run viewer
+
+The Streamlit viewer is a minimal human-facing observability UI.
+
+It does not call LangGraph directly. It calls the FastAPI AG-UI SSE endpoint:
+
+```txt
+POST /ag-ui/runs
+```
+
+FastAPI remains the interface boundary, and LangGraph remains the workflow
+owner. Streamlit does not directly call workflow internals, model clients, or
+MCP. No checkpointing, resume support, persistence, auth, WebSockets, or run
+history is added.
+
+Start the FastAPI backend:
+
+```bash
+uv run uvicorn contract_question_agent.api.app:app --reload
+```
+
+Start the Streamlit viewer:
+
+```bash
+uv run streamlit run viewer/streamlit_app.py
+```
+
+Open the Streamlit URL shown in the terminal.
+
+The viewer submits a single clause, reads AG-UI-compatible lifecycle events,
+and renders the final safe state snapshot. It removes raw `evidence_text` from
+rendered backend snapshots.
+
+This is not a chat UI. It is a run/output viewer.
+
 ## Example output
 
 The example below is **illustrative only**. The clause text is synthetic
