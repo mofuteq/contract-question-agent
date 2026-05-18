@@ -254,7 +254,7 @@ workflow orchestration.
 
 The API is a minimal HTTP boundary over the same workflow. It does not add
 legal-advice behavior, autonomous tool calling, persistence, auth, background
-jobs, WebSockets, AG-UI, or run history.
+jobs, WebSockets, or run history.
 
 `POST /runs` accepts a single clause payload, writes a temporary one-row JSONL
 input internally, executes the existing LangGraph workflow synchronously, and
@@ -274,6 +274,39 @@ Dry-run example:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/runs \
+  -H "content-type: application/json" \
+  -d '{
+    "contract_id": "demo-contract",
+    "clause_type": "Non-Compete",
+    "evidence_text": "Employee will not compete for one year after termination.",
+    "dry_run": true
+  }'
+```
+
+## AG-UI run event stream
+
+The AG-UI endpoint exposes a minimal human-facing event stream for observing a
+single workflow run.
+
+It is intentionally not a chat UI. The endpoint streams coarse run lifecycle
+events over Server-Sent Events:
+
+- `RUN_STARTED`
+- `STEP_STARTED`
+- `STEP_FINISHED`
+- `STATE_SNAPSHOT`
+- `RUN_FINISHED`
+- `RUN_ERROR`
+
+The stream is designed for a future run viewer. It does not add persistence,
+auth, WebSockets, checkpointing, or run history. LangGraph checkpointing is
+intentionally not added yet.
+
+The event snapshot removes raw `evidence_text` from generated question outputs.
+Local artifacts are still written under `data/cuad/api-runs/{run_id}/`.
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/ag-ui/runs \
   -H "content-type: application/json" \
   -d '{
     "contract_id": "demo-contract",

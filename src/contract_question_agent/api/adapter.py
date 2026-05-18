@@ -39,9 +39,17 @@ API_OUTPUT_DIR = Path("data/cuad/api-runs")
 INPUT_FILENAME = "input_clause_spans.jsonl"
 
 
-async def run_workflow_from_api_request(api_request: RunRequest) -> RunResponse:
+def make_api_run_id() -> str:
+    return str(uuid4())
+
+
+async def run_workflow_from_api_request(
+    api_request: RunRequest,
+    *,
+    run_id: str | None = None,
+) -> RunResponse:
     """Adapt one HTTP clause payload into the existing JSONL workflow."""
-    run_id = str(uuid4())
+    run_id = run_id or make_api_run_id()
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
     run_dir = API_OUTPUT_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
